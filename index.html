@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>帰り道ナビ | 文理学部 → 笹塚</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="./">↗ 帰り道ナビ</a><span class="badge">MVP · 仮ダイヤ</span></header>
+    <p class="eyebrow">日本大学文理学部 → 笹塚駅</p>
+    <section class="recommendation" aria-labelledby="recommendation-title" aria-live="polite" id="result"></section>
+    <section class="settings" aria-labelledby="settings-title">
+      <div class="section-heading"><h2 id="settings-title">出発の条件</h2><button type="button" id="now">現在時刻に戻す</button></div>
+      <form id="conditions">
+        <label>大学を出る時刻<input id="departure" type="time" required></label>
+        <label>桜上水駅までの徒歩時間<div class="number-input"><input id="walk-sakurajosui" type="number" min="0" max="120" step="1" value="9" required><span>分</span></div></label>
+        <label>下高井戸駅までの徒歩時間<div class="number-input"><input id="walk-shimotakaido" type="number" min="0" max="120" step="1" value="8" required><span>分</span></div></label>
+      </form>
+      <p class="hint">時刻や徒歩時間を変えると、その場で比較します。時刻は自動更新しません。</p>
+      <p id="error" role="alert" hidden></p>
+      <div class="examples"><span>試してみる</span><button type="button" data-time="18:03">18:03 下高井戸</button><button type="button" data-time="18:07">18:07 桜上水</button></div>
+    </section>
+    <section aria-labelledby="comparison-title"><div class="section-heading"><h2 id="comparison-title">2つの帰り道を比較</h2><span>目的地：笹塚駅</span></div><div id="comparison" class="comparison"></div></section>
+    <footer><strong>このアプリは動作確認用です。</strong><p>表示する列車・時刻はすべて仮データで、実際の運行とは異なります。毎時同じダイヤを繰り返します。駅到着と発車が同時刻なら乗車可能として計算し、構内移動・遅延は考慮しません。</p></footer>
+  </main>
+</body>
+</html>
