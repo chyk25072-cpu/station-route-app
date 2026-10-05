@@ -11,20 +11,25 @@
   <main>
     <header><a class="brand" href="./">↗ 帰り道ナビ</a><span class="badge">MVP · 仮ダイヤ</span></header>
     <p class="eyebrow">日本大学文理学部 → 笹塚駅</p>
-    <section class="recommendation" aria-labelledby="recommendation-title" aria-live="polite" id="result"></section>
+    <div class="clock-bar"><span id="mode" class="mode" role="status">現在時刻モード</span><time id="clock"></time></div>
+    <section class="recommendation" aria-labelledby="recommendation-title" id="result">
+      <h1 id="recommendation-title" aria-live="polite">帰り道を計算しています</h1>
+      <div id="recommendation-details"></div>
+    </section>
     <section class="settings" aria-labelledby="settings-title">
       <div class="section-heading"><h2 id="settings-title">出発の条件</h2><button type="button" id="now">現在時刻に戻す</button></div>
       <form id="conditions">
-        <label>大学を出る時刻<input id="departure" type="time" required></label>
-        <label>桜上水駅までの徒歩時間<div class="number-input"><input id="walk-sakurajosui" type="number" min="0" max="120" step="1" value="9" required><span>分</span></div></label>
-        <label>下高井戸駅までの徒歩時間<div class="number-input"><input id="walk-shimotakaido" type="number" min="0" max="120" step="1" value="8" required><span>分</span></div></label>
+        <label class="date-field">大学を出る日時（秒まで指定可）<input id="departure" type="datetime-local" step="1" aria-describedby="time-help" required></label>
+        <label>桜上水駅までの所要時間<div class="number-input"><input id="walk-sakurajosui" type="number" min="0" max="120" step="1" value="9" aria-describedby="walking-help" required><span>分</span></div></label>
+        <label>下高井戸駅までの所要時間<div class="number-input"><input id="walk-shimotakaido" type="number" min="0" max="120" step="1" value="8" aria-describedby="walking-help" required><span>分</span></div></label>
       </form>
-      <p class="hint">時刻や徒歩時間を変えると、その場で比較します。時刻は自動更新しません。</p>
+      <p class="hint" id="walking-help">所要時間は、大学を出てから駅構内の移動を含め、電車に乗れる場所に着くまでの時間です。構内移動や乗車余裕時間は別途加算しません。</p>
+      <p class="hint" id="time-help">現在時刻モードは毎秒更新します。日時欄の編集を始めるとテストモードになり、指定日時を固定します。「現在時刻に戻す」で実際の日時に戻ります。</p>
       <p id="error" role="alert" hidden></p>
-      <div class="examples"><span>試してみる</span><button type="button" data-time="18:03">18:03 下高井戸</button><button type="button" data-time="18:07">18:07 桜上水</button></div>
+      <div class="examples"><span>試してみる（所要時間も初期値に戻ります）</span><button type="button" data-time="18:03:00">18:03 下高井戸</button><button type="button" data-time="18:07:00">18:07 桜上水</button><button type="button" data-time="18:16:00">18:16 後発が先着</button><button type="button" data-time="18:50:00">18:50 同着</button></div>
     </section>
-    <section aria-labelledby="comparison-title"><div class="section-heading"><h2 id="comparison-title">2つの帰り道を比較</h2><span>目的地：笹塚駅</span></div><div id="comparison" class="comparison"></div></section>
-    <footer><strong>このアプリは動作確認用です。</strong><p>表示する列車・時刻はすべて仮データで、実際の運行とは異なります。毎時同じダイヤを繰り返します。駅到着と発車が同時刻なら乗車可能として計算し、構内移動・遅延は考慮しません。</p></footer>
+    <section aria-labelledby="comparison-title"><div class="section-heading"><h2 id="comparison-title">2つの帰り道を比較</h2><span>目的地：笹塚駅</span></div><p class="hint">大学を出る日時から2時間以内に発車する全列車を比較します。乗り逃した場合も同じ検索範囲で、すでに乗車場所にいる前提です。</p><div id="comparison" class="comparison"></div></section>
+    <footer><strong>このアプリは動作確認用です。</strong><p>列車・時刻・追い越しはすべて仮データで、実際の運行とは異なります。毎時同じダイヤを24時間繰り返し、終電や運休日は再現しません。日時はブラウザのローカル時刻です。発車時刻の秒は00秒。乗車可能時刻が発車時刻と一致すれば計算上は乗車可能ですが、1秒でも遅れると乗れません。遅延は考慮しません。</p></footer>
   </main>
 </body>
 </html>
