@@ -1,0 +1,14 @@
+{
+  "name": "station-route-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static Keio station route planner",
+  "scripts": {
+    "build": "node scripts/build-data.cjs && node scripts/build-site.cjs",
+    "build:data": "node scripts/build-data.cjs",
+    "test": "node --test tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  }
+}

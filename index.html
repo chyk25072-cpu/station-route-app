@@ -3,33 +3,80 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>帰り道ナビ | 文理学部 → 笹塚</title>
+  <title>帰り道ナビ | 最適な駅を検索</title>
   <link rel="stylesheet" href="style.css">
+  <script src="data/seed.js" defer></script>
+  <script src="railway-core.js" defer></script>
+  <script src="data-manager.js" defer></script>
   <script src="script.js" defer></script>
 </head>
 <body>
   <main>
-    <header><a class="brand" href="./">↗ 帰り道ナビ</a><span class="badge">MVP · 仮ダイヤ</span></header>
-    <p class="eyebrow">日本大学文理学部 → 笹塚駅</p>
-    <div class="clock-bar"><span id="mode" class="mode" role="status">現在時刻モード</span><time id="clock"></time></div>
-    <section class="recommendation" aria-labelledby="recommendation-title" id="result">
-      <h1 id="recommendation-title" aria-live="polite">帰り道を計算しています</h1>
-      <div id="recommendation-details"></div>
-    </section>
-    <section class="settings" aria-labelledby="settings-title">
-      <div class="section-heading"><h2 id="settings-title">出発の条件</h2><button type="button" id="now">現在時刻に戻す</button></div>
-      <form id="conditions">
-        <label class="date-field">大学を出る日時（秒まで指定可）<input id="departure" type="datetime-local" step="1" aria-describedby="time-help" required></label>
-        <label>桜上水駅までの所要時間<div class="number-input"><input id="walk-sakurajosui" type="number" min="0" max="120" step="1" value="9" aria-describedby="walking-help" required><span>分</span></div></label>
-        <label>下高井戸駅までの所要時間<div class="number-input"><input id="walk-shimotakaido" type="number" min="0" max="120" step="1" value="8" aria-describedby="walking-help" required><span>分</span></div></label>
+    <header>
+      <a class="brand" href="./">↗ 帰り道ナビ</a>
+      <details id="app-menu" class="app-menu"><summary>メニュー</summary><nav aria-label="メインメニュー">
+        <button type="button" data-page="search">駅を検索</button>
+        <button type="button" data-page="walking">徒歩時間を計測</button>
+        <button type="button" data-page="timetable">時刻表を編集</button>
+        <button type="button" data-page="storage">保存・バックアップ</button>
+      </nav></details>
+    </header>
+    <p id="storage-notice" class="notice" role="status" hidden></p>
+    <div id="page-search" class="page">
+      <p class="eyebrow">歩く時間と電車を比べて、帰り道を選ぶ。</p>
+      <form id="conditions" class="search-panel settings">
+        <label>出発地<input id="origin-name" value="日本大学文理学部" maxlength="80" list="origin-places" required></label>
+        <datalist id="origin-places"><option value="日本大学文理学部"><option value="現在地"></datalist>
+        <label>目的地<select id="destination"></select></label>
+        <fieldset class="station-choices"><legend>比較する駅と徒歩時間</legend>
+          <div class="station-choice"><label>駅①<select id="candidate-a"></select></label><label><span id="walk-label-a" class="sr-only">桜上水駅までの所要時間</span>徒歩<div class="number-input"><input id="walk-sakurajosui" type="number" min="0" max="120" step="1" value="9" aria-describedby="walking-help" required><span>分</span></div></label></div>
+          <div class="station-choice"><label>駅②<select id="candidate-b"></select></label><label><span id="walk-label-b" class="sr-only">下高井戸駅までの所要時間</span>徒歩<div class="number-input"><input id="walk-shimotakaido" type="number" min="0" max="120" step="1" value="8" aria-describedby="walking-help" required><span>分</span></div></label></div>
+          <p id="walking-help" class="hint">徒歩時間には、駅構内を移動して電車に乗れる場所に着くまでを含めてください。</p>
+        </fieldset>
+        <label class="date-field">出発日時<input id="departure" type="datetime-local" step="1" aria-describedby="time-help" required></label>
+        <div class="time-tools"><span id="mode" role="status">現在時刻</span><time id="clock" class="sr-only"></time><button type="button" id="now">現在時刻に戻す</button></div>
+        <p id="time-help" class="hint full-row">日時を変えると、その時刻を固定して試せます。</p>
+        <details class="full-row time-options"><summary>曜日を指定する</summary><label>運行日<select id="service-day"><option value="auto">自動（土日は土休日）</option><option value="weekday">平日</option><option value="holiday">土休日・祝日</option></select></label><p class="hint">祝日は「土休日・祝日」を選んでください。</p></details>
+        <button type="submit" id="search-button" class="primary full-row">最適な駅を検索</button>
+        <p id="error" class="full-row" role="alert" hidden></p>
       </form>
-      <p class="hint" id="walking-help">所要時間は、大学を出てから駅構内の移動を含め、電車に乗れる場所に着くまでの時間です。構内移動や乗車余裕時間は別途加算しません。</p>
-      <p class="hint" id="time-help">現在時刻モードは毎秒更新します。日時欄の編集を始めるとテストモードになり、指定日時を固定します。「現在時刻に戻す」で実際の日時に戻ります。</p>
-      <p id="error" role="alert" hidden></p>
-      <div class="examples"><span>試してみる（所要時間も初期値に戻ります）</span><button type="button" data-time="18:03:00">18:03 下高井戸</button><button type="button" data-time="18:07:00">18:07 桜上水</button><button type="button" data-time="18:16:00">18:16 後発が先着</button><button type="button" data-time="18:50:00">18:50 同着</button></div>
+      <p id="source-notice" hidden></p>
+      <section class="recommendation" aria-labelledby="recommendation-title" id="result">
+        <h1 id="recommendation-title" aria-live="polite">電車を探しています</h1>
+        <div id="recommendation-details"></div>
+      </section>
+      <details class="comparison-details"><summary>駅ごとの比較・乗り逃した場合</summary><section aria-labelledby="comparison-title"><h2 id="comparison-title" class="sr-only">駅ごとの候補</h2><div id="comparison" class="comparison"></div></section></details>
+    </div>
+    <section id="page-walking" class="page settings" hidden aria-labelledby="walking-title">
+      <h1 id="walking-title">徒歩時間を計測</h1><p class="hint">出発時に開始し、乗車場所に着いたら終了します。実時間で計測し、保存した平均を検索に使えます。</p>
+      <label>計測する駅<select id="walking-station"></select></label><div id="walking-controls"></div>
     </section>
-    <section aria-labelledby="comparison-title"><div class="section-heading"><h2 id="comparison-title">2つの帰り道を比較</h2><span>目的地：笹塚駅</span></div><p class="hint">大学を出る日時から2時間以内に発車する全列車を比較します。乗り逃した場合も同じ検索範囲で、すでに乗車場所にいる前提です。</p><div id="comparison" class="comparison"></div></section>
-    <footer><strong>このアプリは動作確認用です。</strong><p>列車・時刻・追い越しはすべて仮データで、実際の運行とは異なります。毎時同じダイヤを24時間繰り返し、終電や運休日は再現しません。日時はブラウザのローカル時刻です。発車時刻の秒は00秒。乗車可能時刻が発車時刻と一致すれば計算上は乗車可能ですが、1秒でも遅れると乗れません。遅延は考慮しません。</p></footer>
+    <section id="page-timetable" class="page" hidden aria-labelledby="timetable-title">
+      <h1 id="timetable-title">時刻表を編集</h1>
+      <form id="table-filters" class="filter-grid">
+        <label>路線<select id="filter-line"></select></label><label>駅<select id="filter-station"></select></label>
+        <label>方向<select id="filter-direction"><option value="inbound">上り（新宿方面）</option><option value="outbound">下り</option></select></label>
+        <label>曜日<select id="filter-day"><option value="weekday">平日</option><option value="holiday">土休日</option></select></label><label>時間帯<select id="filter-hour"></select></label>
+      </form>
+      <div class="section-heading"><p id="table-count" role="status"></p><button id="new-train" type="button">列車を追加</button></div>
+      <div class="table-scroll"><table><thead><tr><th>発車</th><th>種別・行先</th><th>操作</th></tr></thead><tbody id="timetable-rows"></tbody></table></div>
+      <div class="pagination"><button id="prev-page" type="button">前へ</button><span id="table-page"></span><button id="next-page" type="button">次へ</button></div>
+      <form id="train-editor" class="settings" hidden>
+        <h2 id="editor-title">列車を編集</h2><input id="edit-id" type="hidden">
+        <div class="filter-grid"><label>種別<select id="edit-type"></select></label><label>行先<input id="edit-destination" required maxlength="200" value="新宿"></label><label>始発駅<select id="edit-origin"></select></label></div>
+        <label>駅ごとの時刻<textarea id="edit-stops" rows="6" required placeholder="桜上水,,18:10,停車&#10;笹塚,18:18,,停車"></textarea></label>
+        <p class="hint">1行に「駅名,到着,発車,停車または通過」。翌日は24:05と入力します。不明な時刻は空欄のまま保存できます。</p>
+        <div class="actions"><button type="submit">保存</button><button type="button" id="cancel-edit">キャンセル</button></div><p id="editor-message" role="status"></p>
+      </form>
+      <details class="settings"><summary>時刻をまとめて追加</summary><p class="hint">1行に18:03、または18:03,各駅停車,新宿。到着時刻は自動入力しません。</p><textarea id="bulk-text" rows="5" placeholder="18:03&#10;18:12,各駅停車,新宿"></textarea><button id="bulk-save" type="button">追加する</button><p id="bulk-message" role="status"></p></details>
+      <button id="reset-table" type="button">選択した駅の時刻表を初期状態に戻す</button><p id="table-message" role="status"></p>
+    </section>
+    <section id="page-storage" class="page settings" hidden aria-labelledby="storage-title">
+      <h1 id="storage-title">保存・バックアップ</h1><p class="hint">編集内容と徒歩記録は、このブラウザへ自動保存します。通常の検索にファイル登録は不要です。</p><div id="storage-summary"></div>
+      <details><summary>バックアップ</summary><button id="export-data" type="button">JSONで保存</button><label>バックアップから復元<input id="import-file" type="file" accept="application/json,.json"></label><pre id="import-preview" class="notice" hidden></pre><button id="import-confirm" type="button" hidden>この内容で復元する</button><p id="import-message" role="status"></p></details>
+      <details><summary>初期化</summary><div class="actions"><button id="reset-data" type="button">時刻表の変更を初期化</button><button id="reset-all" type="button">徒歩記録も含めて初期化</button></div></details>
+    </section>
+    <footer><p>「シミュレーション」は一部区間の所要時間も含む仮の時刻です。実際の運行は公式情報をご確認ください。</p></footer>
   </main>
 </body>
 </html>

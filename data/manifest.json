@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "name": "all_six_timetables.json",
+      "sha256": "9dc7e4c70ba2e0101958cd77be1463aa8069a2868f4f9af497b6039903f5071a"
+    },
+    {
+      "name": "keio_all_data.json",
+      "sha256": "bd19e179fbc5d6a8202c5f4fc665c6fdac9c4a3031f8652e707674e5ef9bffa9"
+    }
+  ],
+  "counts": {
+    "sakurajosui_saturday_inbound": 226,
+    "sakurajosui_weekday_inbound": 251,
+    "sasazuka_saturday_inbound": 263,
+    "sasazuka_weekday_inbound": 277,
+    "shimotakaido_saturday_inbound": 155,
+    "shimotakaido_weekday_inbound": 156
+  }
+}
