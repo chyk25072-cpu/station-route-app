@@ -40,7 +40,7 @@ function publicResult(data, endpoint) {
   if(endpoint==='rail')return {ResultSet:{max:number(data.ResultSet.max),Line:asArray(data.ResultSet.Line).map(line=>({Name:text(line.Name),Type:text(line.Type)}))}};
   return {ResultSet:{Course:asArray(data.ResultSet.Course).map(course=>({dataType:text(course.dataType),Route:asArray(course.Route).map(route=>({
     transferCount:number(route.transferCount),timeWalk:number(route.timeWalk),
-    Line:asArray(route.Line).map(line=>({Name:text(line.Name),TypicalName:text(line.TypicalName),Type:text(line.Type),timeOnBoard:number(line.timeOnBoard)})),
+    Line:asArray(route.Line).map(line=>({Name:text(line.Name),TypicalName:text(line.TypicalName),Type:text(line.Type),timeOnBoard:number(line.timeOnBoard),stopStationCount:number(line.stopStationCount)})),
     Point:asArray(route.Point).map(point=>({Station:{Name:text(point.Station?.Name)}}))
   }))}))}};
 }

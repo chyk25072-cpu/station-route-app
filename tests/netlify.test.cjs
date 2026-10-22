@@ -9,7 +9,7 @@ const course={endpoint:'search/course/extreme',viaList:'桜上水:笹塚',date:'
 const request=(params=rail,method='GET')=>new Request('https://station-route-app.netlify.app/.netlify/functions/ekispert?'+new URLSearchParams(params),{method});
 function data(endpoint){
   if(endpoint==='rail')return {ResultSet:{max:'1',Line:{Name:'京王線各停',Type:{text:'train'}}}};
-  return {ResultSet:{Course:{dataType:'plain',SerializeData:SECRET,Route:{timeOther:'99',timeWalk:'0',transferCount:'0',Line:{Name:'京王線各停',Type:'train',timeOnBoard:'6'},Point:[{Station:{Name:'桜上水'}},{Station:{Name:'笹塚'}}]}}}};
+  return {ResultSet:{Course:{dataType:'plain',SerializeData:SECRET,Route:{timeOther:'99',timeWalk:'0',transferCount:'0',Line:{Name:'京王線各停',Type:'train',timeOnBoard:'6',stopStationCount:'3'},Point:[{Station:{Name:'桜上水'}},{Station:{Name:'笹塚'}}]}}}};
 }
 async function handler(options={}){return (await modulePromise).createHandler({getKey:()=>SECRET,...options});}
 
@@ -24,7 +24,7 @@ test('実行時環境変数を読み、キーはFunctionからの上流リクエ
     for(const params of [rail,course]){
       const response=await h(request(params));assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
       const text=await response.text();assert.ok(!text.includes(SECRET));assert.ok(!text.includes('SerializeData'));assert.ok(!text.includes('key='));
-      if(params===course)assert.equal(E.readDuration(JSON.parse(text),{from:'桜上水',to:'笹塚',lineName:'京王線各停'}).minutes,6);
+      if(params===course){assert.equal(E.readDuration(JSON.parse(text),{from:'桜上水',to:'笹塚',lineName:'京王線各停'}).minutes,6);assert.equal(JSON.parse(text).ResultSet.Course[0].Route[0].Line[0].stopStationCount,'3');}
     }
     assert.deepEqual(urls.map(url=>url.pathname),['/v1/json/rail','/v1/json/search/course/extreme']);
   }finally{if(old===undefined)delete process.env.EKISPERT_API_KEY;else process.env.EKISPERT_API_KEY=old;}

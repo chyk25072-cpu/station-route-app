@@ -8,9 +8,9 @@ const C=require('../railway-core.js');
 process.env.TZ='Asia/Tokyo';
 const root=path.join(__dirname,'..');
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-async function app(saved=null,{apiEnabled=false,failStatus=0}={}) {
+async function app(saved=null,{apiEnabled=false,failStatus=0,bareRails=false,stopCountDelta=0,nowAt='2026-10-19T18:00:00+09:00'}={}) {
   const dom=new JSDOM(fs.readFileSync(path.join(root,'index.html'),'utf8'),{url:'https://station-route-app.test',runScripts:'outside-only',pretendToBeVisual:true});
-  const w=dom.window, intervals=[],errors=[];let now=new Date('2026-10-19T18:00:00+09:00').getTime(),hidden=false,blob;
+  const w=dom.window, intervals=[],errors=[];let now=new Date(nowAt).getTime(),hidden=false,blob;
   const ActualDate=w.Date;w.Date=class extends ActualDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
   w.setInterval=callback=>{intervals.push(callback);return intervals.length;};
   w.confirm=()=>true;
@@ -27,10 +27,12 @@ async function app(saved=null,{apiEnabled=false,failStatus=0}={}) {
     if(failStatus)return {ok:false,status:502,json:async()=>({error:{code:'UPSTREAM_AUTH_FAILED',message:'駅すぱあとAPIの認証に失敗しました（HTTP '+failStatus+'）。登録ドメイン制限を確認してください。'}})};
     if(url.searchParams.get('endpoint')==='diagnostics')return {ok:true,json:async()=>({ok:true,checkedAt:'2026-10-22T00:00:00Z',checks:[{endpoint:'rail',ok:true,upstreamStatus:200},{endpoint:'search/course/extreme',ok:true,upstreamStatus:200}]})};
     const types=['各駅停車','快速','区間急行','急行','特急'];
-    if(url.searchParams.get('endpoint')==='rail')return {ok:true,json:async()=>({ResultSet:{max:'5',Line:types.map(type=>({Name:'京王線'+type,Type:'train'}))}})};
+    const listedTypes=bareRails==='only-local'?['各駅停車']:types;
+    if(url.searchParams.get('endpoint')==='rail')return {ok:true,json:async()=>({ResultSet:{max:String(listedTypes.length),Line:listedTypes.map(type=>({Name:bareRails&&type==='各駅停車'?'京王線':'京王線'+type,Type:'train'}))}})};
     const [from,to]=url.searchParams.get('viaList').split(':'),name=url.searchParams.get('fixedRailList');
-    const duration=from==='桜上水'?5:4;
-    return {ok:true,json:async()=>({ResultSet:{Course:{dataType:'plain',Route:{timeWalk:'0',timeOther:'99',transferCount:'0',Line:{Name:name,Type:'train',timeOnBoard:String(duration)},Point:[{Station:{Name:from}},{Station:{Name:to}}]}}}})};
+    const path=C.findPath(C.stationId(from),C.stationId(to));
+    const duration=bareRails?(path.length-1)*2:from==='桜上水'?5:4;
+    return {ok:true,json:async()=>({ResultSet:{Course:{dataType:'plain',Route:{timeWalk:'0',timeOther:'99',transferCount:'0',Line:{Name:name,Type:'train',timeOnBoard:String(duration),stopStationCount:String(path.length-2+stopCountDelta)},Point:[{Station:{Name:from}},{Station:{Name:to}}]}}}})};
   };
   for(const file of ['data/seed.js','railway-core.js','api-config.js','ekispert-client.js','data-manager.js','script.js']){
     w.eval(fs.readFileSync(path.join(root,file),'utf8'));
@@ -83,7 +85,7 @@ test('API契約に沿う応答を使って発車に乗車時間を加算し、�
   const a=await app(null,{apiEnabled:true});try{
     const start=new Date('2026-10-19T18:00:00+09:00').getTime(),rows=await a.w.RailwayApp.getTrains({start,end:start+7200000});
     assert.ok(rows.length);assert.ok(rows.every(row=>row.arrival-row.departure===(row.stationId==='sakurajosui'?5:4)*60000));
-    assert.match(a.$('recommendation-details').textContent,/到着予測/);assert.ok(a.requests.some(url=>url.searchParams.get('endpoint')==='rail'));
+    assert.match(a.$('recommendation-details').textContent,/推定到着/);assert.ok(a.requests.some(url=>url.searchParams.get('endpoint')==='rail'));
     assert.ok(a.requests.some(url=>url.searchParams.get('searchType')==='plain'&&url.searchParams.get('fixedRailList')));
     const count=a.requests.length;await a.w.RailwayApp.getTrains({start,end:start+7200000});assert.equal(a.requests.length,count);
   }finally{a.close();}
@@ -180,7 +182,7 @@ function customSchedule(rows,destination='sasazuka'){
 }
 test('指定された駅選択ルールをUIでも優先し、遅い場合に「早い」と表示しない',async()=>{
   for(const [rows,destination,title,comparison]of [
-    [[['sakurajosui','outbound','各駅停車','18:09','18:30'],['shimotakaido','outbound','各駅停車','18:08','18:20']],'八幡山',/今は桜上水駅/,/10分遅く/],
+    [[['sakurajosui','outbound','各駅停車','18:09','18:30'],['shimotakaido','outbound','各駅停車','18:08','18:20']],'八幡山',/今は桜上水駅/,/下り方面は桜上水駅/],
     [[['sakurajosui','inbound','各駅停車','18:09','18:12'],['shimotakaido','inbound','各駅停車','18:08','18:14']],'sasazuka',/今は下高井戸駅/,/2分遅く/],
     [[['sakurajosui','inbound','急行','18:09','18:14'],['shimotakaido','inbound','快速','18:08','18:14']],'sasazuka',/どちらの駅でも笹塚への到着は同じ/,/両駅の列車/]
   ]){
@@ -198,4 +200,100 @@ test('徒歩短縮の具体的提案と秒更新。提案があってもカー�
     assert.equal(a.w.document.querySelector('.walking-suggestion'),suggestion);assert.equal(a.w.document.querySelector('.hero-route'),hero);
     assert.match(suggestion.textContent,/3分1秒/);
   }finally{a.close();}
+});
+
+test('京王八王子を含む下り各方面は無印路線の各停で到着を推定し、下高井戸を探索しない',async()=>{
+  const a=await app(null,{apiEnabled:true,bareRails:true});try{
+    await a.set('departure','2026-10-19T12:00:00','input');
+    const queries=[],query=a.w.RailwayCore.query;
+    a.w.RailwayCore.query=(trains,seed,request)=>{queries.push({trains,request});return query(trains,seed,request);};
+    const initialRequests=a.requests.length;
+    for(const destination of ['京王八王子','高幡不動','橋本','高尾山口','京王多摩センター','八幡山']){
+      await a.set('destination',destination);
+      const start=new Date('2026-10-19T12:00:00+09:00').getTime();
+      const rows=await a.w.RailwayApp.getTrains({start,end:start+7200000});await flush();
+      assert.ok(rows.length,destination);assert.ok(rows.every(row=>row.stationId==='sakurajosui'&&row.arrivalSource==='estimated'));
+      assert.ok(rows.every(row=>row.arrival-row.departure===(C.findPath('sakurajosui',destination).length-1)*2*60000));
+      assert.match(a.$('recommendation-title').textContent,/今は桜上水駅/);
+      assert.match(a.$('recommendation-details').textContent,/推定到着/);
+      assert.match(a.$('comparison').textContent,/推定到着/);assert.ok(!a.$('comparison').textContent.includes('下高井戸'));
+    }
+    assert.ok(queries.every(({trains,request})=>request.fromIds.length===1&&request.fromIds[0]==='sakurajosui'&&trains.every(train=>train.anchorStationId==='sakurajosui')));
+    assert.ok(a.requests.slice(initialRequests).every(url=>![url.searchParams.get('from'),url.searchParams.get('viaList')?.split(':')[0]].includes('下高井戸')));
+    assert.equal(a.$('result-walking-station').value,'sakurajosui');assert.deepEqual(a.errors,[]);
+  }finally{a.close();}
+});
+
+test('停車パターン不一致・深夜の候補なしでは根拠のない駅案内を出さない',async()=>{
+  const a=await app(null,{apiEnabled:true,bareRails:'only-local',stopCountDelta:-1});try{
+    await a.set('departure','2026-10-19T12:00:00','input');
+    await a.set('destination','京王八王子');
+    assert.match(a.$('recommendation-title').textContent,/乗車可能な列車なし/);
+    assert.ok(!a.$('recommendation-details').textContent.includes('おすすめします'));
+    assert.match(a.$('recommendation-details').textContent,/平均路線・乗車時間/);
+    assert.ok(!a.$('recommendation-details').textContent.includes('停車を確認できません'));
+    await a.set('departure','2026-10-19T02:00:00','input');
+    assert.ok(!a.$('recommendation-title').textContent.includes('向かう'));
+    assert.equal(a.w.document.querySelector('.hero-route'),null);
+  }finally{a.close();}
+});
+
+test('提供JSONの八・高八と曜日を保持し、直通便がない平日夕方は捏造しない',async()=>{
+  const a=await app(null,{apiEnabled:true,bareRails:true});try{
+    await a.set('destination','京王八王子');
+    assert.match(a.$('recommendation-title').textContent,/乗車可能な列車なし/); // 平日18:00〜20:00に直通便なし。
+    await a.set('departure','2026-10-19T05:40:00','input');
+    const start=new Date('2026-10-19T05:40:00+09:00').getTime();
+    const rows=await a.w.RailwayApp.getTrains({start,end:start+7200000});
+    const eight=rows.find(row=>row.trainDestination==='八'&&row.type==='各駅停車'),high=rows.find(row=>row.trainDestination==='高八');
+    assert.ok(eight&&high);assert.equal(eight.arrivalSource,'estimated');
+    assert.equal(high.type,'急行');
+    assert.deepEqual(JSON.parse(JSON.stringify(high.predictionSegments)),[{from:'sakurajosui',to:'高幡不動',type:'急行'},{from:'高幡不動',to:'京王八王子',type:'各駅停車'}]);
+    assert.equal(high.arrival-high.departure,(C.findPath('sakurajosui','京王八王子').length-1)*2*60000);
+    for(const [date,day]of [['2026-10-24','saturday'],['2026-10-25','sunday']]){
+      await a.set('departure',date+'T18:00:00','input');const time=new Date(date+'T18:00:00+09:00').getTime();
+      const weekend=await a.w.RailwayApp.getTrains({start:time,end:time+7200000});
+      assert.ok(weekend.length);assert.ok(weekend.every(row=>row.serviceDay===day&&row.stationId==='sakurajosui'));
+      assert.match(a.$('recommendation-title').textContent,/今は桜上水駅/);
+    }
+  }finally{a.close();}
+});
+
+test('結果からの徒歩計測はメニューと状態を共有し、手動選択・復帰・再起動後の日時差を維持',async()=>{
+  const a=await app(null,{apiEnabled:true});let b,c;
+  try{
+    assert.equal(a.$('result-walking').hidden,false);assert.equal(a.$('result-walking-station').options.length,2);
+    assert.equal(a.$('result-walking-station').value,'shimotakaido'); // 両駅各停の推奨ルール。
+    await a.set('result-walking-station','sakurajosui');await a.tick(1);
+    assert.equal(a.$('result-walking-station').value,'sakurajosui'); // 秒更新で選択を上書きしない。
+    a.$('result-walking-start').focus();await a.click('result-walking-start');
+    const startedAt=a.store().walking.active.startedAt;
+    assert.equal(a.store().walking.active.stationId,'sakurajosui');
+    assert.equal(a.$('result-walking-start').disabled,true);assert.equal(a.$('walking-station').disabled,true);
+    assert.equal(a.w.document.querySelector('[data-walk-start]').disabled,true);
+    await a.resume(127); // intervalを実行せず、バックグラウンドから復帰。
+    assert.match(a.$('result-walking-elapsed').textContent,/2分7秒/);
+    assert.equal(a.$('walking-elapsed').textContent,a.$('result-walking-elapsed').textContent);
+    assert.equal(a.store().walking.active.startedAt,startedAt);assert.equal(a.store().walking.history.length,0);
+    b=await app(a.w.localStorage.getItem(C.KEY),{apiEnabled:true,nowAt:new Date(startedAt+247000).toISOString()});
+    a.close();
+    assert.match(b.$('result-walking-elapsed').textContent,/4分7秒/);
+    assert.equal(b.$('result-walking-station').value,'sakurajosui'); // 推奨が変わっても計測対象を維持。
+    await b.resume(13);await b.click('result-walking-stop');
+    assert.equal(b.store().walking.active,null);assert.equal(b.store().walking.history.length,1);
+    assert.equal(b.store().walking.history[0].seconds,260);
+    assert.equal(b.store().walking.history[0].date,new Date(startedAt+260000).toISOString());
+    assert.match(b.$('walking-history').textContent,/4分20秒/);
+    b.w.document.querySelector('[data-walk-apply="sakurajosui"]').click();await flush();
+    assert.equal(b.$('walk-sakurajosui').value,'5');
+    // メニューで開始し、結果側で停止しても重複記録を作らない。
+    b.w.document.querySelector('[data-walk-start="sakurajosui"]').click();await flush();
+    await b.resume(100);await b.click('result-walking-stop');
+    assert.equal(b.store().walking.history.length,2);assert.equal(b.$('walk-sakurajosui').value,'3');
+    const id=b.store().walking.history[0].id;b.w.document.querySelector('[data-walk-delete="'+id+'"]').click();await flush();
+    assert.equal(b.store().walking.history.length,1);assert.equal(b.$('walk-sakurajosui').value,'2');
+    c=await app(b.w.localStorage.getItem(C.KEY));assert.equal(c.store().walking.active,null);assert.equal(c.store().walking.history[0].seconds,100);
+    assert.equal(c.$('walk-sakurajosui').value,'2');assert.equal(c.$('result-walking-stop').disabled,true);
+    assert.deepEqual(b.errors,[]);
+  }finally{a.close();b?.close();c?.close();}
 });

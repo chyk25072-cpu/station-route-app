@@ -17,7 +17,10 @@
     for(const type of ['区間急行','特急','急行','快速'])if(n.includes(type))return type;
     return /各駅停車|各停|普通/.test(n)?'各駅停車':null;
   }
-  function readDuration(json,{from,to,lineName}){
+  // 無印の京王路線は、名前だけでは各停と決めない。区間内の全駅に
+  // 停車する数と一致するAPI応答が得られたときだけ、各停に利用する。
+  const isUnnamedLocal=name=>['京王線','京王高尾線','京王相模原線','京王新線'].includes(normalize(name));
+  function readDuration(json,{from,to,lineName,type,stations}){
     const result=json?.ResultSet;
     if(!result||result.Error)throw Error('平均走行時間APIがエラーを返しました');
     const candidates=[];
@@ -29,6 +32,15 @@
       const line=lines[0],minutes=Number(line.timeOnBoard);
       if(text(line.Type)!=='train'||!Number.isFinite(minutes)||minutes<=0||minutes>720)continue;
       if(![line.Name,line.TypicalName].some(name=>normalize(name)===normalize(lineName)))continue;
+      const namedTypes=[line.Name,line.TypicalName].map(lineType).filter(Boolean);
+      if(type&&namedTypes.some(named=>named!==type))continue;
+      if(isUnnamedLocal(lineName)){
+        // stopStationCountは両端を除く途中停車駅数。別経路・急行等へ流用しない。
+        if(type!=='各駅停車'||!Array.isArray(stations)||stations.length<2||
+          normalize(stations[0])!==normalize(from)||normalize(stations.at(-1))!==normalize(to)||
+          line.stopStationCount===undefined||line.stopStationCount===null||line.stopStationCount===''||
+          Number(line.stopStationCount)!==stations.length-2)continue;
+      }
       candidates.push({minutes,lineName:text(line.Name),source:'ekispert'});
     }
     return candidates.sort((a,b)=>a.minutes-b.minutes)[0]||null;
@@ -62,8 +74,8 @@
         throw Error('Netlify Functionとの通信に失敗しました。Netlifyの公開環境またはローカル開発サーバーで確認してください。');
       }finally{cancel(timer);}
     }
-    async function getAverageTime({from,to,type,date}){
-      const key=[from,to,type,date].join(':');
+    async function getAverageTime({from,to,type,date,stations}){
+      const key=JSON.stringify([from,to,type,date,stations]);
       return memo(key,async()=>{
         const rails=await memo('rails:'+from+':'+to+':'+date,async()=>{
           const all=[];let offset=1;
@@ -78,11 +90,12 @@
           }
           throw Error('平均走行時間APIの路線一覧が多すぎます');
         });
-        const matches=[...new Set(rails.filter(line=>text(line.Type)==='train'&&lineType(line.Name)===type).map(line=>text(line.Name)))];
+        const matches=[...new Set(rails.filter(line=>text(line.Type)==='train'&&
+          (lineType(line.Name)===type||type==='各駅停車'&&isUnnamedLocal(line.Name))).map(line=>text(line.Name)))];
         const results=[];
         for(const lineName of matches){
           const json=await request('search/course/extreme',{viaList:from+':'+to,searchType:'plain',fixedRailList:lineName,date,answerCount:20,searchCount:20});
-          const duration=readDuration(json,{from,to,lineName});if(duration)results.push(duration);
+          const duration=readDuration(json,{from,to,lineName,type,stations});if(duration)results.push(duration);
         }
         return results.sort((a,b)=>a.minutes-b.minutes)[0]||null;
       });

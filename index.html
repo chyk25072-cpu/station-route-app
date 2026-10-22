@@ -47,6 +47,12 @@
         <div id="recommendation-details"></div>
       </section>
       <details class="comparison-details"><summary>駅ごとの比較・乗り逃した場合</summary><section aria-labelledby="comparison-title"><h2 id="comparison-title" class="sr-only">駅ごとの候補</h2><div id="comparison" class="comparison"></div></section></details>
+      <section id="result-walking" class="settings result-walking" aria-labelledby="result-walking-title" hidden>
+        <h2 id="result-walking-title">駅までの徒歩時間を計測</h2>
+        <label>計測する駅<select id="result-walking-station"></select></label>
+        <div class="actions"><button type="button" id="result-walking-start">徒歩計測を開始</button><button type="button" id="result-walking-stop" disabled>停止して保存</button></div>
+        <p id="result-walking-elapsed" role="status" aria-live="off"></p>
+      </section>
     </div>
     <section id="page-walking" class="page settings" hidden aria-labelledby="walking-title">
       <h1 id="walking-title">徒歩時間を計測</h1><p class="hint">出発時に開始し、乗車場所に着いたら終了します。実時間で計測し、保存した平均を検索に使えます。</p>

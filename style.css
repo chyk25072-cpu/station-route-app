@@ -94,6 +94,10 @@ summary { cursor: pointer; font-weight: 700; font-size: 15px; padding: 6px 0; }
 .walking-row { border-bottom: 1px solid #e0e7e2; padding: 12px 0; }
 .walking-row h3 { margin: 8px 0; font-size: 15px; }
 .walking-row p { font-size: 12px; }
+.result-walking { margin-top: 24px; }
+.result-walking h2 { margin-top: 0; font-size: 18px; }
+.result-walking label { display: block; max-width: 360px; }
+#result-walking-elapsed { font-size: 14px; font-variant-numeric: tabular-nums; }
 .destination-field { max-width: 360px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .app-menu { position: relative; }

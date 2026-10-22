@@ -30,6 +30,7 @@
   options($('edit-type'),['各駅停車','快速','区間急行','急行','特急'].map(value=>({value,label:value})),'各駅停車');
   options($('edit-origin'),[{value:'',label:'不明・未入力'},...C.allStations.map(station=>({value:station.id,label:station.name}))],'');
   options($('walking-station'),C.FOCUS_STATIONS.map(id=>({value:id,label:C.stationName(id)+'駅'})),store.walking.active?.stationId||'sakurajosui');
+  options($('result-walking-station'),C.FOCUS_STATIONS.map(id=>({value:id,label:C.stationName(id)+'駅'})),store.walking.active?.stationId||'sakurajosui');
   syncSettings();
   function filters() {return {line:'keio',stationId:$('filter-station').value,direction:$('filter-direction').value,serviceDay:$('filter-day').value};}
   function filtered() {
@@ -167,8 +168,18 @@
     document.querySelectorAll('[data-page]').forEach(item=>{if(item===button)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');});
     $('app-menu').open=false;
   }));
-  // 徒歩計測は日時の差で求め、リロード中も開始日時を保持する。
+  // 2画面とも同じactiveを使う。計測状態は開始時点で永続化する。
+  let lastRecommendation=null, walkingMessage='';
+  function selectWalkingStation(id){
+    if(!C.isFocusStation(id)||store.walking.active)return;
+    $('walking-station').value=id;$('result-walking-station').value=id;
+  }
   function renderWalking() {
+    const active=store.walking.active;
+    if(active){$('walking-station').value=active.stationId;$('result-walking-station').value=active.stationId;$('result-walking').hidden=false;}
+    else $('result-walking-station').value=$('walking-station').value;
+    $('walking-station').disabled=!!active;$('result-walking-station').disabled=!!active;
+    $('result-walking-start').disabled=!!active;$('result-walking-stop').disabled=!active;
     $('walking-controls').innerHTML=[$('walking-station').value].map(id=>{
       const rows=store.walking.history.filter(row=>row.stationId===id), average=rows.length?rows.reduce((sum,row)=>sum+row.seconds,0)/rows.length:null;
       const seconds=Math.round(average||0);
@@ -192,20 +203,35 @@
     refreshAppliedAverage(record.stationId);save({dataChanged:false});renderWalking();
   });
   function updateWalkingClock() {
-    const active=store.walking.active;if(!$('walking-elapsed'))return;
+    const active=store.walking.active;
+    // setIntervalの実行回数は使わない。非表示・スリープ・リロード後も日時差で復元する。
     const seconds=active?Math.max(0,Math.floor((Date.now()-active.startedAt)/1000)):0;
-    $('walking-elapsed').textContent=active?`${C.stationName(active.stationId)}駅まで計測中：${Math.floor(seconds/60)}分${seconds%60}秒`:'';
+    const elapsed=active?`${C.stationName(active.stationId)}駅まで計測中：${Math.floor(seconds/60)}分${seconds%60}秒`:walkingMessage;
+    for(const id of ['walking-elapsed','result-walking-elapsed'])if($(id)&&$(id).textContent!==elapsed)$(id).textContent=elapsed;
   }
-  $('walking-station').addEventListener('change',renderWalking);
+  function startWalking(id){
+    if(store.walking.active||!C.isFocusStation(id))return;
+    store.walking.active={stationId:id,startedAt:Date.now()};walkingMessage='';
+    save({dataChanged:false});renderWalking();
+  }
+  function stopWalking(){
+    const active=store.walking.active;if(!active)return;
+    const stoppedAt=Date.now(),seconds=Math.round((stoppedAt-active.startedAt)/1000);
+    if(seconds<=0||seconds>7200){walkingMessage='計測は1秒〜120分で保存できます。今回の計測を終了しました。';notice(walkingMessage);}
+    else {
+      store.walking.history.push({id:'walk:'+crypto.randomUUID(),stationId:active.stationId,seconds,date:new Date(stoppedAt).toISOString()});
+      refreshAppliedAverage(active.stationId);
+      walkingMessage=`${C.stationName(active.stationId)}駅まで ${Math.floor(seconds/60)}分${seconds%60}秒を保存しました。`;
+    }
+    store.walking.active=null;save({dataChanged:false});renderWalking();
+  }
+  for(const id of ['walking-station','result-walking-station'])$(id).addEventListener('change',()=>{selectWalkingStation($(id).value);renderWalking();});
+  $('result-walking-start').addEventListener('click',()=>startWalking($('result-walking-station').value));
+  $('result-walking-stop').addEventListener('click',stopWalking);
   $('walking-controls').addEventListener('click',event=>{
     const button=event.target.closest('button');if(!button)return;
-    if(button.dataset.walkStart){store.walking.active={stationId:button.dataset.walkStart,startedAt:Date.now()};save({dataChanged:false});renderWalking();}
-    if(button.dataset.walkEnd&&store.walking.active?.stationId===button.dataset.walkEnd){
-      const seconds=Math.round((Date.now()-store.walking.active.startedAt)/1000);
-      if(seconds<=0||seconds>7200){notice('計測は1秒〜120分で保存できます。今回の計測を終了しました。');}
-      else {store.walking.history.push({id:'walk:'+crypto.randomUUID(),stationId:button.dataset.walkEnd,seconds,date:new Date().toISOString()});refreshAppliedAverage(button.dataset.walkEnd);}
-      store.walking.active=null;save({dataChanged:false});renderWalking();
-    }
+    if(button.dataset.walkStart)startWalking(button.dataset.walkStart);
+    if(button.dataset.walkEnd&&store.walking.active?.stationId===button.dataset.walkEnd)stopWalking();
     if(button.dataset.walkApply){
       const id=button.dataset.walkApply,average=C.walkingAverage(store,id);if(average===null)return;
       store.walking.appliedAverages[id]=true;refreshAppliedAverage(id);saveSearch();
@@ -220,40 +246,51 @@
     const input=$(id==='sakurajosui'?'walk-sakurajosui':'walk-shimotakaido');
     input.addEventListener('change',()=>{const value=Number(input.value);if(input.value!==''&&Number.isInteger(value)&&value>=0&&value<=120){store.walking.values[id]=value;delete store.walking.appliedAverages[id];saveSearch();}});
   }
+  function searchDirection(){
+    for(const from of C.FOCUS_STATIONS){const path=C.findPath(from,$('destination').value);if(path?.length>1)return C.edgeDirection(path[0],path[1]);}
+    return null;
+  }
+  const candidateIds=()=>searchDirection()==='outbound'?['sakurajosui']:C.FOCUS_STATIONS;
   globalThis.RailwayApp={
+    updateResultWalking(recommended){
+      $('result-walking').hidden=false;
+      // 同じ検索結果の秒更新で、利用者が選び直した駅を上書きしない。
+      if(recommended&&recommended!==lastRecommendation){selectWalkingStation(recommended);renderWalking();}
+      lastRecommendation=recommended||null;
+    },
     get settings(){return {dayType:store.settings.dayType,showSeconds:true};},
     originName:()=>'日本大学文理学部',
     destinationId:()=>$('destination').value,
-    direction:()=>{
-      for(const from of C.FOCUS_STATIONS){const path=C.findPath(from,$('destination').value);if(path?.length>1)return C.edgeDirection(path[0],path[1]);}
-      return null;
-    },
+    direction:searchDirection,
     destinationName:()=>$('destination').selectedOptions[0]?.textContent||'笹塚駅',
-    candidates:()=>C.FOCUS_STATIONS.map(id=>({id,name:C.stationName(id)+'駅'})),
+    candidates:()=>candidateIds().map(id=>({id,name:C.stationName(id)+'駅'})),
     async getTrains({start,end}){
       const sequence=++querySequence;
       const destinationId=$('destination').value;
       const settings={dayType:store.settings.dayType,destinationAliases:globalThis.EkispertConfig?.destinationAliases||{}};
-      const request={start,end,fromIds:C.FOCUS_STATIONS,destinationId,settings};
-      const initial=C.query(effective(),seed,request),predictions={},issues=new Set();
+      const fromIds=candidateIds();
+      // 下りは下高井戸の列車を、停車駅判定・API問い合わせより前に除外する。
+      const trains=effective().filter(train=>fromIds.includes(train.anchorStationId));
+      const request={start,end,fromIds,destinationId,settings};
+      const initial=C.query(trains,seed,request),predictions={},issues=new Set();
       const groups=new Map();
       for(const train of initial.trains.filter(train=>train.arrivalMissing&&!train.destinationUnverified)){
         const key=C.predictionKey(train.stationId,destinationId,train.type,train.direction,train.operatingDate,train.predictionSegments);
         groups.set(key,{segments:train.predictionSegments,date:train.operatingDate});
       }
       const results=await Promise.allSettled([...groups].map(async([key,params])=>{
-        const durations=await Promise.all(params.segments.map(segment=>api.getAverageTime({from:C.stationName(segment.from),to:C.stationName(segment.to),type:segment.type,date:params.date})));
+        const durations=await Promise.all(params.segments.map(segment=>api.getAverageTime({from:C.stationName(segment.from),to:C.stationName(segment.to),type:segment.type,date:params.date,
+          stations:C.findPath(segment.from,segment.to)?.map(C.stationName)})));
         if(durations.every(Boolean))predictions[key]={minutes:durations.reduce((sum,item)=>sum+item.minutes,0),source:'ekispert'};
-        else predictions[key]={notServed:true};
+        else predictions[key]={unavailable:true};
       }));
       for(const result of results)if(result.status==='rejected')issues.add(result.reason.message);
-      const result=C.query(effective(),seed,{...request,settings:{...settings,predictions}});
+      const result=C.query(trains,seed,{...request,settings:{...settings,predictions}});
       if(sequence===querySequence)queryReasons=[...issues,...result.reasons];
       return result.trains;
     },
     diagnostics:()=>queryReasons,
     diagnosticsHTML(stationId){const name=C.stationName(stationId);const reasons=queryReasons.filter(reason=>reason.startsWith(name));return reasons.length?`<p class="hint">${esc(reasons.join(' / '))}</p>`:'';},
-    reliabilityHTML(train){return train.arrivalSource==='estimated'?'<p class="reliability">到着予測（駅間の平均走行時間）</p>':'';},
     transferHTML(train){
       if(!train.legs?.length||train.legs.length===1)return '';
       const time=value=>{const date=new Date(value),base=new Date(train.departure),pad=value=>String(value).padStart(2,'0');return (date.toDateString()!==base.toDateString()?'翌日 ':'')+pad(date.getHours())+':'+pad(date.getMinutes())+':'+pad(date.getSeconds());};
@@ -263,4 +300,5 @@
   applyWalkingValues();renderWalking();renderTable();renderSummary();updateSearchNotice();
   setInterval(updateWalkingClock,1000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateWalkingClock();});
+  globalThis.addEventListener('pageshow',updateWalkingClock);
 })();

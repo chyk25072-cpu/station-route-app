@@ -144,9 +144,7 @@ const ui = {
 const state = { mode: "live", signature: "", request: 0 };
 const destinationName = () => globalThis.RailwayApp?.destinationName() || "笹塚駅";
 const originLabel = () => "大学";
-function reliabilityHTML(train) {
-  return globalThis.RailwayApp?.reliabilityHTML(train) || "";
-}
+const estimateMark=train=>train.arrivalSource==='estimated'?'（推定）':'';
 function trainDestinationHTML(train) {
   if (!train.trainDestination) return "";
   const text = String(train.trainDestination).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
@@ -157,12 +155,12 @@ function setText(element, value) {
 }
 function laterTrainReason(route, reference) {
   if (!route.firstTrain || !Number.isFinite(route.firstTrain.arrival) || !Number.isFinite(route.train.arrival) || route.firstTrain.departure >= route.train.departure || route.firstTrain.arrival <= route.train.arrival) return "";
-  return `<p class="reason">先に出る電車より${destinationName().replace(/駅$/, "")}に${formatDuration(route.firstTrain.arrival - route.train.arrival)}早く到着<span>${formatTime(route.firstTrain.departure, reference)}発 ${route.firstTrain.type} → ${formatTime(route.firstTrain.arrival, reference)}着を見送ります。</span></p>`;
+  return `<p class="reason">先に出る電車より${destinationName().replace(/駅$/, "")}に${formatDuration(route.firstTrain.arrival - route.train.arrival)}早く到着<span>${formatTime(route.firstTrain.departure, reference)}発 ${route.firstTrain.type} → ${formatTime(route.firstTrain.arrival, reference)}着${estimateMark(route.firstTrain)}を見送ります。</span></p>`;
 }
 function heroRoute(route, reference) {
   if(route.train.isWalking)return '<div class="hero-route"><h2>'+route.station.name+'へ徒歩で向かう</h2><p>電車への乗車は不要です。</p></div>';
   return `<div class="hero-route"><h2>${route.station.name}から · ${formatTime(route.train.departure, reference)}発 ${route.train.type}</h2>
-    ${trainDestinationHTML(route.train)}${reliabilityHTML(route.train)}
+    ${trainDestinationHTML(route.train)}
     ${globalThis.RailwayApp?.transferHTML(route.train) || ""}
     ${laterTrainReason(route, reference)}
     <div class="countdowns"><div><span>電車の発車まで</span><strong data-countdown="${route.train.departure}"></strong><small>${formatTime(route.train.departure, reference)}発</small></div>
@@ -172,7 +170,7 @@ function missedTrainHTML(label, train, route, reference) {
   const comparable = Number.isFinite(train.arrival) && Number.isFinite(route.train.arrival);
   const difference = comparable ? train.arrival - route.train.arrival : null;
   const delay = !comparable ? "到着差は未計算" : difference === 0 ? "推奨列車と同じ到着" : `${route.unknownTrains.length ? "この列車より" : "推奨列車より"}${formatDuration(difference)}遅い`;
-  return `<div class="missed-option"><h5>${label}</h5><p><strong>${formatTime(train.departure, reference)}発</strong> · ${train.type}</p>${trainDestinationHTML(train)}<p>${destinationName()} ${Number.isFinite(train.arrival) ? formatTime(train.arrival, reference) + "着" : "到着未登録"}<span class="delay">${delay}</span></p>${reliabilityHTML(train)}${globalThis.RailwayApp?.transferHTML(train) || ""}</div>`;
+  return `<div class="missed-option"><h5>${label}</h5><p><strong>${formatTime(train.departure, reference)}発</strong> · ${train.type}</p>${trainDestinationHTML(train)}<p>${destinationName()} ${Number.isFinite(train.arrival) ? formatTime(train.arrival, reference) + "着" + estimateMark(train) : "到着未登録"}<span class="delay">${delay}</span></p>${globalThis.RailwayApp?.transferHTML(train) || ""}</div>`;
 }
 function routeHTML(route, plan, reference) {
   const { station, walkingMinutes, train } = route;
@@ -185,11 +183,11 @@ function routeHTML(route, plan, reference) {
     <ol class="timeline">
       <li><time data-reference-time></time><div>${originLabel()}を出発<small>徒歩・構内移動 ${walkingMinutes}分</small></div></li>
       <li><time data-boarding-offset="${walkingMinutes * MINUTE}"></time><div>電車に乗れる場所に到着<small>${train ? `<span data-wait-until="${train.departure}" data-walk="${walkingMinutes * MINUTE}"></span>待ち` : "検索範囲内に乗車可能な列車なし"}</small></div></li>
-      ${train ? `<li><time>${formatTime(train.departure, reference)}</time><div>${train.type}に乗車</div></li><li><time>${hasArrival ? formatTime(train.arrival, reference) : "未登録"}</time><div>${destinationName()} ${hasArrival ? "到着予定" : "到着時刻なし"}</div></li>` : ""}
+      ${train ? `<li><time>${formatTime(train.departure, reference)}</time><div>${train.type}に乗車</div></li><li><time>${hasArrival ? formatTime(train.arrival, reference) : "未登録"}</time><div>${destinationName()} ${hasArrival ? train.arrivalSource==='estimated'?'推定到着':'到着予定' : "到着時刻なし"}</div></li>` : ""}
     </ol>
     ${!train && globalThis.RailwayApp ? RailwayApp.diagnosticsHTML(station.id) : ""}
     ${train ? `${hasArrival ? `<p class="route-total">出発地から <strong data-total-until="${train.arrival}"></strong></p>` : '<p class="hint">発車時刻のみのデータです。到着は補完していません。</p>'}
-      ${trainDestinationHTML(train)}${reliabilityHTML(train)}
+      ${trainDestinationHTML(train)}
       ${globalThis.RailwayApp?.transferHTML(train) || ""}
       <p class="route-deadline">${formatTime(route.deadline, reference)}までに${originLabel()}を出発<br><span data-countdown="${route.deadline}"></span></p>
       ${laterTrainReason(route, reference)}
@@ -202,8 +200,8 @@ function renderPlan(plan, reference) {
   const best = plan.winners[0];
   if (!best || !Number.isFinite(best.train.arrival)) {
     const candidates = plan.routes.filter(route => route.train && (!plan.recommendedStation || route.station.id === plan.recommendedStation));
-    setText(ui.title, plan.recommendedStation ? `今は${plan.recommendedStation === "sakurajosui" ? "桜上水" : "下高井戸"}駅へ向かう` : candidates.length ? "発車候補が見つかりました" : "検索範囲内に乗車可能な列車なし");
-    ui.details.innerHTML = candidates.length ? '<p>到着予測を取得できないため、到着時刻による比較は未確定です。</p>' + candidates.map(route => heroRoute(route, reference)).join("") : plan.recommendedStation ? '<p>おすすめの駅に、出発日時から2時間以内の乗車候補がありません。日時や徒歩時間を変更してください。</p>' : '<p>出発日時から2時間以内の電車がありません。日時や徒歩時間を変更してください。</p>';
+    setText(ui.title, candidates.length ? "発車候補が見つかりました" : "検索範囲内に乗車可能な列車なし");
+    ui.details.innerHTML = candidates.length ? '<p>到着予測を取得できないため、到着時刻による比較は未確定です。</p>' + candidates.map(route => heroRoute(route, reference)).join("") : '<p>出発日時から2時間以内の乗車候補がありません。日時や徒歩時間を変更してください。</p>';
     if (globalThis.RailwayApp) {
       const reasons = document.createElement("p");
       reasons.className = "reliability";
@@ -215,12 +213,12 @@ function renderPlan(plan, reference) {
     setText(ui.title, plan.uncertain && !plan.rule ? "到着が分かる候補を表示" : tied ? `どちらの駅でも${destinationName().replace(/駅$/, "")}への到着は同じ` : `今は${best.station.name}へ向かう`);
     const other = plan.routes.find(route => !plan.winners.includes(route) && route.train);
     const advantage = best.train.isWalking ? "駅まで直接歩いて到着できます" : plan.uncertain ? "到着時刻が未取得の候補があるため、比較は未確定です" : tied ? "両駅の列車・出発期限を確認できます" : other && Number.isFinite(plan.difference) ? plan.difference===0 ? "他方と同じ到着時刻です" : plan.difference>0 ? `${other.station.name}より${formatDuration(plan.difference)}早い` : `到着は${other.station.name}より${formatDuration(-plan.difference)}遅くなります` : "他の駅には比較可能な列車がありません";
-    ui.details.innerHTML = `<div class="arrival-summary"><span>${destinationName()}への到着</span><strong ${best.train.isWalking?`data-boarding-offset="${best.walkingMinutes*MINUTE}"`:''}>${formatTime(best.train.arrival, reference)}</strong><span class="advantage">${advantage}</span></div>
+    ui.details.innerHTML = `<div class="arrival-summary"><span>${destinationName()}への${best.train.arrivalSource==='estimated'?'推定到着':'到着'}</span><strong ${best.train.isWalking?`data-boarding-offset="${best.walkingMinutes*MINUTE}"`:''}>${formatTime(best.train.arrival, reference)}</strong><span class="advantage">${advantage}</span></div>
       <p class="countdown-context">${state.mode === "test" ? "指定時刻からの残り時間（時刻は固定）" : "現在時刻からの残り時間（毎秒更新）"}</p>
       ${plan.winners.map(route => heroRoute(route, reference)).join("")}`;
   }
-  if(plan.policyReason){const reason=document.createElement('p');reason.className='countdown-context';reason.textContent=plan.policyReason;ui.details.append(reason);}
-  if(plan.suggestions?.length)ui.details.innerHTML += '<div class="walking-suggestion">'+plan.suggestions.map(item=>`<p><strong>${item.station.name}</strong>：通常より<span data-walk-reduction="${item.train.departure}" data-walk-offset="${item.walkingMinutes*MINUTE}"></span>早く歩けば、目的地に${formatDuration(item.gain)}早く到着できます。</p><p>${formatTime(item.train.departure,reference)}発 ${item.train.type} → ${formatTime(item.train.arrival,reference)}着</p>`).join('')+'</div>';
+  if(plan.policyReason&&Number.isFinite(best?.train.arrival)){const reason=document.createElement('p');reason.className='countdown-context';reason.textContent=plan.policyReason;ui.details.append(reason);}
+  if(plan.suggestions?.length)ui.details.innerHTML += '<div class="walking-suggestion">'+plan.suggestions.map(item=>`<p><strong>${item.station.name}</strong>：通常より<span data-walk-reduction="${item.train.departure}" data-walk-offset="${item.walkingMinutes*MINUTE}"></span>早く歩けば、目的地に${formatDuration(item.gain)}早く到着できます。</p><p>${formatTime(item.train.departure,reference)}発 ${item.train.type} → ${formatTime(item.train.arrival,reference)}着${estimateMark(item.train)}</p>`).join('')+'</div>';
   ui.comparison.innerHTML = plan.routes.map(route => routeHTML(route, plan, reference)).join("");
 }
 function refreshTimes(reference) {
@@ -263,9 +261,10 @@ async function updateResults() {
   try {
     const trains = await trainProvider.getTrains({ start: reference, end: reference + SEARCH_DURATION });
     if (request !== state.request) return; // 将来API化しても、古い応答で上書きしない。
-    const candidates = selectedCandidates;
-    const searchStations = stations.map((station, index) => ({...station, ...candidates?.[index]}));
-    const plan = compareRoutes(searchStations.map((station, index) => calculateRoute(station, walkingTimes[index], reference, trains)));
+    const searchStations = selectedCandidates ? selectedCandidates.map(candidate=>({...stations.find(station=>station.id===candidate.id),...candidate})) : stations;
+    const plan = compareRoutes(searchStations.map(station=>calculateRoute(station,Number(document.getElementById(station.inputId).value),reference,trains)));
+    const recommended=plan.winners.length===1&&Number.isFinite(plan.winners[0].train?.arrival)&&(!plan.uncertain||plan.rule)?plan.winners[0].station.id:null;
+    globalThis.RailwayApp?.updateResultWalking?.(recommended);
     plan.suggestions=walkingSuggestions(plan,trains,reference);
     // 出発期限を過ぎた列車は探索から外れるため、自動で次の候補に切り替わる。
     const signature = JSON.stringify({ mode: state.mode, day: datePart(new Date(reference)), walkingTimes,

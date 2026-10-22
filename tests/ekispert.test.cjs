@@ -15,6 +15,27 @@ test('各停・区間急行・急行の分類を混同せず、無印路線を�
   assert.equal(E.lineType('京王線各停'),'各駅停車');assert.equal(E.lineType('京王線区間急行'),'区間急行');
   assert.equal(E.lineType('京王線急行'),'急行');assert.equal(E.lineType('京王線'),null);assert.equal(E.lineType('他社線快速'),null);
 });
+
+test('無印の京王線は途中停車駅数が全駅と一致する各停区間だけ採用',async()=>{
+  const C=require('../railway-core.js');
+  const stations=C.findPath('sakurajosui','京王八王子').map(C.stationName);
+  const request={from:'桜上水',to:'京王八王子',lineName:'京王線',type:'各駅停車',stations};
+  const route={Line:{Name:'京王線・京王八王子行',TypicalName:'京王線',Type:'train',timeOnBoard:'65',stopStationCount:String(stations.length-2)},Point:[{Station:{Name:'桜上水'}},{Station:{Name:'京王八王子'}}]};
+  assert.equal(E.readDuration(response(route),request).minutes,65);
+  // 駅数が足りない便、別種別、未知の停車駅数、迂回・乗換経路は流用しない。
+  for(const patch of [{stopStationCount:'2'},{stopStationCount:undefined},{Name:'京王線急行'},{timeOnBoard:0}]){
+    assert.equal(E.readDuration(response({...route,Line:{...route.Line,...patch}}),request),null);
+  }
+  assert.equal(E.readDuration(response(route),{...request,type:'急行'}),null);
+  const requests=[];
+  const client=E.createClient({fetch:async address=>{
+    const url=new URL(address,'https://app.test');requests.push(url);
+    return {ok:true,json:async()=>url.searchParams.get('endpoint')==='rail'?{ResultSet:{max:'1',Line:{Name:'京王線',Type:'train'}}}:response(route)};
+  }});
+  assert.equal((await client.getAverageTime({...request,date:params.date})).minutes,65);
+  assert.equal(requests.length,2);assert.equal(requests[1].searchParams.get('fixedRailList'),'京王線');
+  assert.equal(await client.getAverageTime({...request,type:'急行',date:params.date}),null);
+});
 test('railで路線名を取得してからplain探索を固定し、同一取得をキャッシュ',async()=>{
   const requests=[];let now=0;
   const client=E.createClient({config:{functionPath:'/.netlify/functions/ekispert',apiKey:'OLD_KEY_MUST_NOT_BE_SENT'},now:()=>now,fetch:async address=>{

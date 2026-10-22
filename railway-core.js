@@ -355,7 +355,7 @@
           let arrivalSource=arrival===null?null:target.arrivalSource;
           const segments=predictionSegments(raw,fromId,destinationId,settings.destinationAliases);
           const prediction=settings.predictions?.[predictionKey(fromId,destinationId,raw.type,raw.direction,operatingDate,segments)];
-          if(arrival===null&&prediction?.notServed){reasons.add(stationName(fromId)+'：'+raw.type+'の目的駅への停車を確認できません');continue;}
+          if(arrival===null&&(prediction?.notServed||prediction?.unavailable)){reasons.add(stationName(fromId)+'：'+raw.type+'に一致する直通の平均路線・乗車時間を取得できません');continue;}
           // 元の登録時刻を優先。行先の略称が不明な列車に架空の直通経路を与えない。
           const destinationUnverified=terminal===null&&!target;
           if(arrival===null&&!destinationUnverified&&prediction&&Number.isFinite(prediction.minutes)&&prediction.minutes>0) {
