@@ -7,21 +7,7 @@ const stations = [
   { id: "shimotakaido", name: "下高井戸駅", inputId: "walk-shimotakaido", defaultMinutes: 8 }
 ];
 
-// 毎時繰り返す動作確認用データ。分単位の発車は必ず00秒にする。
-// :25の各停（:45着）より、:30の急行（:35着）が早く着く仮のケース。
-const mockTimetable = [
-  { stationId: "sakurajosui", departureMinute: 0, type: "各駅停車", duration: 8 },
-  { stationId: "sakurajosui", departureMinute: 9, type: "各駅停車", duration: 18 },
-  { stationId: "sakurajosui", departureMinute: 15, type: "急行", duration: 5 },
-  { stationId: "sakurajosui", departureMinute: 20, type: "急行", duration: 5 },
-  { stationId: "sakurajosui", departureMinute: 25, type: "各駅停車", duration: 20 },
-  { stationId: "sakurajosui", departureMinute: 30, type: "急行", duration: 5 },
-  { stationId: "sakurajosui", departureMinute: 35, type: "各駅停車", duration: 8 },
-  { stationId: "sakurajosui", departureMinute: 50, type: "急行", duration: 5 },
-  ...[3, 13, 23, 33, 43, 53].map(departureMinute => ({
-    stationId: "shimotakaido", departureMinute, type: "各駅停車", duration: 5
-  }))
-];
+const MAX_WALKING_REDUCTION = 5 * MINUTE; // 「数分」の提案範囲は最大5分。
 
 // 1. 現在日時をブラウザから秒単位で取得。計算は日時のミリ秒値で行う。
 function currentTime() {
@@ -77,29 +63,8 @@ function countdown(target, reference) {
 // 各列車に出発駅・発車日時・種別・笹塚到着日時を持たせる。
 const trainProvider = {
   async getTrains({ start, end }) {
-    if (typeof window !== "undefined" && !globalThis.RailwayApp) {
-      throw new Error("時刻表管理の初期化に失敗しました。初期データとスクリプトの読込を確認してください。");
-    }
-    // 検索は常に同じ取得口へ。旧配列は独立した回帰テストのみに残す。
-    if (globalThis.RailwayApp) {
-      return RailwayApp.getTrains({ start, end });
-    }
-    const trains = [];
-    const hour = new Date(start);
-    hour.setMinutes(0, 0, 0);
-    while (hour.getTime() <= end) {
-      for (const entry of mockTimetable) {
-        const departure = hour.getTime() + entry.departureMinute * MINUTE;
-        if (departure < start || departure > end) continue;
-        trains.push({
-          stationId: entry.stationId,
-          departureStation: stations.find(station => station.id === entry.stationId).name,
-          departure, type: entry.type, destination: "笹塚駅", arrival: departure + entry.duration * MINUTE
-        });
-      }
-      hour.setHours(hour.getHours() + 1);
-    }
-    return trains;
+    if (!globalThis.RailwayApp) throw new Error('時刻表の初期化に失敗しました');
+    return RailwayApp.getTrains({start,end});
   }
 };
 
@@ -110,6 +75,10 @@ function earliestArrival(trains) {
 function calculateRoute(station, walkingMinutes, departureTime, trains) {
   // 2. 構内移動込みの所要時間だけを加算。余裕時間などは追加しない。
   const boardingTime = departureTime + walkingMinutes * MINUTE;
+  if(globalThis.RailwayApp?.destinationId?.()===station.id){
+    const train={id:'walk:'+station.id,stationId:station.id,departure:boardingTime,arrival:boardingTime,type:'徒歩',isWalking:true};
+    return {station,walkingMinutes,boardingTime,firstTrain:train,train,deadline:departureTime,unknownTrains:[],nextTrain:null,missedBest:null};
+  }
   const searchEnd = departureTime + SEARCH_DURATION;
   // 3. 最初の電車だけに限定せず、2時間以内の乗車可能な全列車を探索する。
   const candidates = trains.filter(train => train.stationId === station.id &&
@@ -127,15 +96,42 @@ function calculateRoute(station, walkingMinutes, departureTime, trains) {
   return { station, walkingMinutes, boardingTime, firstTrain, train, deadline, unknownTrains,
     nextTrain: later[0] || null, missedBest: earliestArrival(later) };
 }
-function compareRoutes(routes) {
+function compareRoutes(routes, direction = globalThis.RailwayApp?.direction?.()) {
   // 4. 駅ごとの最早到着を比較。同着なら両駅を結果に残す。
   const available = routes.filter(route => route.train && Number.isFinite(route.train.arrival))
     .sort((a, b) => a.train.arrival - b.train.arrival);
   const bestArrival = available[0]?.train.arrival;
-  const winners = available.filter(route => route.train.arrival === bestArrival);
+  let winners = available.filter(route => route.train.arrival === bestArrival);
   const other = available.find(route => route.train.arrival !== bestArrival);
   const uncertain = routes.some(route => route.unknownTrains.some(train => bestArrival === undefined || train.departure <= bestArrival));
-  return { routes, winners, uncertain, difference: other ? other.train.arrival - bestArrival : null };
+  let rule=null,policyReason='',recommendedStation=null;
+  if(direction==='outbound'){
+    recommendedStation='sakurajosui';rule='outbound';policyReason='下り方面は桜上水駅をおすすめします。';
+  }else if(direction==='inbound'&&routes.length===2&&routes.every(route=>route.train?.type==='各駅停車')){
+    recommendedStation='shimotakaido';rule='local';policyReason='両駅の最適候補が各駅停車なので、下高井戸駅をおすすめします。';
+  }
+  if(recommendedStation){const route=routes.find(route=>route.station.id===recommendedStation);winners=route?.train?[route]:[];}
+  const selected=winners[0],alternative=routes.find(route=>route!==selected&&Number.isFinite(route.train?.arrival));
+  const difference=Number.isFinite(selected?.train?.arrival)&&alternative?alternative.train.arrival-selected.train.arrival:null;
+  return { routes, winners, uncertain, difference:rule?difference:other ? other.train.arrival - bestArrival : null,rule,policyReason,recommendedStation };
+}
+function walkingSuggestions(plan,trains,reference,direction=globalThis.RailwayApp?.direction?.()){
+  const baseline=plan.winners[0]?.train;
+  if(!Number.isFinite(baseline?.arrival)||plan.uncertain)return [];
+  const results=[];
+  for(const route of plan.routes)for(const train of trains){
+    if(train.stationId!==route.station.id||!Number.isFinite(train.arrival)||train.departure<reference||train.departure>=route.boardingTime||train.arrival>=baseline.arrival)continue;
+    const reduction=route.boardingTime-train.departure;
+    if(reduction>MAX_WALKING_REDUCTION||reduction>route.walkingMinutes*MINUTE)continue;
+    const hypothetical=compareRoutes(plan.routes.map(row=>calculateRoute(row.station,row===route?(train.departure-reference)/MINUTE:row.walkingMinutes,reference,trains)),direction);
+    const winner=hypothetical.winners[0];
+    // 短縮後も同じ駅選択ルールで選ばれ、実際にこの電車が最適になる場合だけ提案する。
+    if(winner?.train!==train||hypothetical.uncertain||winner.train.arrival>=baseline.arrival)continue;
+    results.push({station:route.station,walkingMinutes:route.walkingMinutes,train,reduction,gain:baseline.arrival-train.arrival});
+  }
+  const best=new Map();
+  for(const result of results.sort((a,b)=>b.gain-a.gain||a.reduction-b.reduction))if(!best.has(result.station.id))best.set(result.station.id,result);
+  return [...best.values()];
 }
 
 // ここから画面処理。計算関数はDOMに依存しないので、単体で検証できる。
@@ -147,9 +143,14 @@ const ui = {
 };
 const state = { mode: "live", signature: "", request: 0 };
 const destinationName = () => globalThis.RailwayApp?.destinationName() || "笹塚駅";
-const originLabel = () => !globalThis.RailwayApp || RailwayApp.originName() === "日本大学文理学部" ? "大学" : "出発地";
+const originLabel = () => "大学";
 function reliabilityHTML(train) {
   return globalThis.RailwayApp?.reliabilityHTML(train) || "";
+}
+function trainDestinationHTML(train) {
+  if (!train.trainDestination) return "";
+  const text = String(train.trainDestination).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+  return `<p class="hint">行先：${text}${train.destinationUnverified ? '（略称・目的駅への停車は未確認）' : ''}</p>`;
 }
 function setText(element, value) {
   if (element.textContent !== value) element.textContent = value;
@@ -159,24 +160,26 @@ function laterTrainReason(route, reference) {
   return `<p class="reason">先に出る電車より${destinationName().replace(/駅$/, "")}に${formatDuration(route.firstTrain.arrival - route.train.arrival)}早く到着<span>${formatTime(route.firstTrain.departure, reference)}発 ${route.firstTrain.type} → ${formatTime(route.firstTrain.arrival, reference)}着を見送ります。</span></p>`;
 }
 function heroRoute(route, reference) {
+  if(route.train.isWalking)return '<div class="hero-route"><h2>'+route.station.name+'へ徒歩で向かう</h2><p>電車への乗車は不要です。</p></div>';
   return `<div class="hero-route"><h2>${route.station.name}から · ${formatTime(route.train.departure, reference)}発 ${route.train.type}</h2>
-    ${reliabilityHTML(route.train)}
+    ${trainDestinationHTML(route.train)}${reliabilityHTML(route.train)}
     ${globalThis.RailwayApp?.transferHTML(route.train) || ""}
     ${laterTrainReason(route, reference)}
-    <div class="countdowns"><div><span>${originLabel()}を出るまで</span><strong data-countdown="${route.deadline}"></strong><small>${formatTime(route.deadline, reference)}までに出発</small></div>
-    <div><span>電車の発車まで</span><strong data-countdown="${route.train.departure}"></strong><small>${formatTime(route.train.departure, reference)}発</small></div></div></div>`;
+    <div class="countdowns"><div><span>電車の発車まで</span><strong data-countdown="${route.train.departure}"></strong><small>${formatTime(route.train.departure, reference)}発</small></div>
+    <div><span>大学を出るまで</span><strong data-countdown="${route.deadline}"></strong><small>${formatTime(route.deadline, reference)}までに出発</small></div></div></div>`;
 }
 function missedTrainHTML(label, train, route, reference) {
   const comparable = Number.isFinite(train.arrival) && Number.isFinite(route.train.arrival);
   const difference = comparable ? train.arrival - route.train.arrival : null;
   const delay = !comparable ? "到着差は未計算" : difference === 0 ? "推奨列車と同じ到着" : `${route.unknownTrains.length ? "この列車より" : "推奨列車より"}${formatDuration(difference)}遅い`;
-  return `<div class="missed-option"><h5>${label}</h5><p><strong>${formatTime(train.departure, reference)}発</strong> · ${train.type}</p><p>${destinationName()} ${Number.isFinite(train.arrival) ? formatTime(train.arrival, reference) + "着" : "到着未登録"}<span class="delay">${delay}</span></p>${reliabilityHTML(train)}${globalThis.RailwayApp?.transferHTML(train) || ""}</div>`;
+  return `<div class="missed-option"><h5>${label}</h5><p><strong>${formatTime(train.departure, reference)}発</strong> · ${train.type}</p>${trainDestinationHTML(train)}<p>${destinationName()} ${Number.isFinite(train.arrival) ? formatTime(train.arrival, reference) + "着" : "到着未登録"}<span class="delay">${delay}</span></p>${reliabilityHTML(train)}${globalThis.RailwayApp?.transferHTML(train) || ""}</div>`;
 }
 function routeHTML(route, plan, reference) {
   const { station, walkingMinutes, train } = route;
-  const isWinner = !plan.uncertain && plan.winners.includes(route);
+  const isWinner = (!plan.uncertain || plan.rule) && plan.winners.includes(route);
   const hasArrival = train && Number.isFinite(train.arrival);
   const tag = isWinner ? (plan.winners.length > 1 ? "同着" : "おすすめ") : "";
+  if(train?.isWalking)return `<article class="route ${isWinner?'winner':''}"><h3>${station.name}</h3><p>大学から徒歩${walkingMinutes}分</p><p><time data-boarding-offset="${walkingMinutes*MINUTE}"></time> 到着予定</p><p class="hint">電車への乗車は不要です。</p></article>`;
   return `<article class="route ${isWinner ? "winner" : ""}">
     <div class="route-head"><h3>${station.name}</h3>${tag ? `<span class="route-tag">${tag}</span>` : ""}</div>
     <ol class="timeline">
@@ -186,7 +189,7 @@ function routeHTML(route, plan, reference) {
     </ol>
     ${!train && globalThis.RailwayApp ? RailwayApp.diagnosticsHTML(station.id) : ""}
     ${train ? `${hasArrival ? `<p class="route-total">出発地から <strong data-total-until="${train.arrival}"></strong></p>` : '<p class="hint">発車時刻のみのデータです。到着は補完していません。</p>'}
-      ${reliabilityHTML(train)}
+      ${trainDestinationHTML(train)}${reliabilityHTML(train)}
       ${globalThis.RailwayApp?.transferHTML(train) || ""}
       <p class="route-deadline">${formatTime(route.deadline, reference)}までに${originLabel()}を出発<br><span data-countdown="${route.deadline}"></span></p>
       ${laterTrainReason(route, reference)}
@@ -197,11 +200,11 @@ function routeHTML(route, plan, reference) {
 }
 function renderPlan(plan, reference) {
   const best = plan.winners[0];
-  if (!best) {
-    const candidates = plan.routes.filter(route => route.train);
-    setText(ui.title, candidates.length ? "発車候補が見つかりました" : "検索範囲内に乗車可能な列車なし");
-    ui.details.innerHTML = candidates.length ? '<p>到着時刻が未登録のため、最適な駅は比較できません。</p>' + candidates.map(route => heroRoute(route, reference)).join("") : '<p>出発日時から2時間以内の電車がありません。日時や徒歩時間を変更してください。</p>';
-    if (globalThis.RailwayApp && !candidates.length) {
+  if (!best || !Number.isFinite(best.train.arrival)) {
+    const candidates = plan.routes.filter(route => route.train && (!plan.recommendedStation || route.station.id === plan.recommendedStation));
+    setText(ui.title, plan.recommendedStation ? `今は${plan.recommendedStation === "sakurajosui" ? "桜上水" : "下高井戸"}駅へ向かう` : candidates.length ? "発車候補が見つかりました" : "検索範囲内に乗車可能な列車なし");
+    ui.details.innerHTML = candidates.length ? '<p>到着予測を取得できないため、到着時刻による比較は未確定です。</p>' + candidates.map(route => heroRoute(route, reference)).join("") : plan.recommendedStation ? '<p>おすすめの駅に、出発日時から2時間以内の乗車候補がありません。日時や徒歩時間を変更してください。</p>' : '<p>出発日時から2時間以内の電車がありません。日時や徒歩時間を変更してください。</p>';
+    if (globalThis.RailwayApp) {
       const reasons = document.createElement("p");
       reasons.className = "reliability";
       reasons.textContent = RailwayApp.diagnostics().join(" / ");
@@ -209,18 +212,21 @@ function renderPlan(plan, reference) {
     }
   } else {
     const tied = plan.winners.length > 1;
-    setText(ui.title, plan.uncertain ? "到着が分かる候補を表示" : tied ? `どちらの駅でも${destinationName().replace(/駅$/, "")}への到着は同じ` : `今は${best.station.name}へ向かう`);
+    setText(ui.title, plan.uncertain && !plan.rule ? "到着が分かる候補を表示" : tied ? `どちらの駅でも${destinationName().replace(/駅$/, "")}への到着は同じ` : `今は${best.station.name}へ向かう`);
     const other = plan.routes.find(route => !plan.winners.includes(route) && route.train);
-    const advantage = plan.uncertain ? "到着未登録の候補があるため、比較は未確定です" : tied ? "両駅の列車・出発期限を確認できます" : other ? `${other.station.name}より${formatDuration(plan.difference)}早い` : "他の駅には検索範囲内の乗車候補がありません";
-    ui.details.innerHTML = `<div class="arrival-summary"><span>${destinationName()}への到着</span><strong>${formatTime(best.train.arrival, reference)}</strong><span class="advantage">${advantage}</span></div>
+    const advantage = best.train.isWalking ? "駅まで直接歩いて到着できます" : plan.uncertain ? "到着時刻が未取得の候補があるため、比較は未確定です" : tied ? "両駅の列車・出発期限を確認できます" : other && Number.isFinite(plan.difference) ? plan.difference===0 ? "他方と同じ到着時刻です" : plan.difference>0 ? `${other.station.name}より${formatDuration(plan.difference)}早い` : `到着は${other.station.name}より${formatDuration(-plan.difference)}遅くなります` : "他の駅には比較可能な列車がありません";
+    ui.details.innerHTML = `<div class="arrival-summary"><span>${destinationName()}への到着</span><strong ${best.train.isWalking?`data-boarding-offset="${best.walkingMinutes*MINUTE}"`:''}>${formatTime(best.train.arrival, reference)}</strong><span class="advantage">${advantage}</span></div>
       <p class="countdown-context">${state.mode === "test" ? "指定時刻からの残り時間（時刻は固定）" : "現在時刻からの残り時間（毎秒更新）"}</p>
       ${plan.winners.map(route => heroRoute(route, reference)).join("")}`;
   }
+  if(plan.policyReason){const reason=document.createElement('p');reason.className='countdown-context';reason.textContent=plan.policyReason;ui.details.append(reason);}
+  if(plan.suggestions?.length)ui.details.innerHTML += '<div class="walking-suggestion">'+plan.suggestions.map(item=>`<p><strong>${item.station.name}</strong>：通常より<span data-walk-reduction="${item.train.departure}" data-walk-offset="${item.walkingMinutes*MINUTE}"></span>早く歩けば、目的地に${formatDuration(item.gain)}早く到着できます。</p><p>${formatTime(item.train.departure,reference)}発 ${item.train.type} → ${formatTime(item.train.arrival,reference)}着</p>`).join('')+'</div>';
   ui.comparison.innerHTML = plan.routes.map(route => routeHTML(route, plan, reference)).join("");
 }
 function refreshTimes(reference) {
   // 選ばれた列車が変わらない秒には、必要なテキストだけを更新する。
   // 入力欄やカードを毎秒作り直さず、フォーカス・入力操作を保つ。
+  document.querySelectorAll('[data-walk-reduction]').forEach(element=>setText(element,formatDuration(reference+Number(element.dataset.walkOffset)-Number(element.dataset.walkReduction))));
   document.querySelectorAll("[data-countdown]").forEach(element => setText(element, countdown(Number(element.dataset.countdown), reference)));
   document.querySelectorAll("[data-reference-time]").forEach(element => setText(element, formatTime(reference, reference)));
   document.querySelectorAll("[data-boarding-offset]").forEach(element => setText(element, formatTime(reference + Number(element.dataset.boardingOffset), reference)));
@@ -260,11 +266,12 @@ async function updateResults() {
     const candidates = selectedCandidates;
     const searchStations = stations.map((station, index) => ({...station, ...candidates?.[index]}));
     const plan = compareRoutes(searchStations.map((station, index) => calculateRoute(station, walkingTimes[index], reference, trains)));
+    plan.suggestions=walkingSuggestions(plan,trains,reference);
     // 出発期限を過ぎた列車は探索から外れるため、自動で次の候補に切り替わる。
     const signature = JSON.stringify({ mode: state.mode, day: datePart(new Date(reference)), walkingTimes,
       settings: globalThis.RailwayApp?.settings, destination: destinationName(), reasons: globalThis.RailwayApp?.diagnostics(),
-      origin: globalThis.RailwayApp?.originName(), uncertain: plan.uncertain,
-      routes: plan.routes.map(route => [route.train, route.firstTrain, route.nextTrain, route.missedBest]) });
+      origin: globalThis.RailwayApp?.originName(), uncertain: plan.uncertain, rule:plan.rule, suggestions:plan.suggestions.map(item=>[item.station.id,item.train.id,item.gain]),
+      routes: plan.routes.map(route => [route.train, route.firstTrain, route.nextTrain, route.missedBest].map(train=>train?.isWalking?{...train,departure:0,arrival:0}:train)) });
     if (signature !== state.signature) {
       renderPlan(plan, reference);
       state.signature = signature;
@@ -293,7 +300,6 @@ ui.form.addEventListener("input", updateResults);
 ui.form.addEventListener("submit", async event => { event.preventDefault(); await updateResults(); document.getElementById("result")?.scrollIntoView?.({behavior:"smooth",block:"start"}); });
 document.getElementById("now").addEventListener("click", returnToCurrentTime);
 document.querySelectorAll("[data-time]").forEach(button => button.addEventListener("click", () => {
-  globalThis.RailwayApp?.useLegacyDemo();
   const base = Number.isFinite(parseDateTime(ui.departure.value)) ? parseDateTime(ui.departure.value) : currentTime();
   ui.departure.value = `${datePart(new Date(base))}T${button.dataset.time}`;
   stations.forEach(station => { document.getElementById(station.inputId).value = station.defaultMinutes; });

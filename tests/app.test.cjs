@@ -43,6 +43,7 @@ async function app(start = "18:03:00") {
     }
     get innerHTML() { return this.html || ""; }
     replaceChildren() { this.innerHTML = ""; }
+    append(child) { this.children.push(child); }
   }
   for (const id of ["conditions", "departure", "mode", "clock", "recommendation-title", "recommendation-details", "comparison", "error", "now", "walk-sakurajosui", "walk-shimotakaido"]) elements.set(id, new Element());
   elements.get("walk-sakurajosui").value = "9";
@@ -54,6 +55,7 @@ async function app(start = "18:03:00") {
   const document = {
     activeElement: null, hidden: false,
     getElementById: id => elements.get(id),
+    createElement: () => new Element(),
     addEventListener: (event, handler) => documentEvents.set(event, handler),
     querySelectorAll(selector) {
       if (selector === "[data-time]") return [example];
@@ -62,7 +64,9 @@ async function app(start = "18:03:00") {
     }
   };
   class ClockDate extends Date { static now() { return now; } }
-  const context = vm.createContext({ document, Date: ClockDate, console, setInterval(handler) { interval = handler; } });
+  const RailwayApp={getTrains:require('./fixtures.cjs').getTrains,direction:()=>null,settings:{showSeconds:true},
+    destinationName:()=>"笹塚駅",originName:()=>"日本大学文理学部",candidates:()=>[{id:'sakurajosui',name:'桜上水駅'},{id:'shimotakaido',name:'下高井戸駅'}],reliabilityHTML:()=>"",transferHTML:()=>"",diagnostics:()=>[],diagnosticsHTML:()=>""};
+  const context = vm.createContext({ document, RailwayApp, Date: ClockDate, console, setInterval(handler) { interval = handler; } });
   vm.runInContext(source, context);
   await flush();
   return {
@@ -120,7 +124,7 @@ test("発車と乗車可能時刻の一致・1秒遅れ・大学の出発期限"
   a.setNow("18:06:01");
   await a.tick();
   assert.match(a.elements.get("recommendation-details").innerHTML, /18:20:00発/);
-  assert.ok(!a.elements.get("recommendation-details").innerHTML.includes("18:15:00発"));
+  assert.ok(!a.elements.get("recommendation-details").innerHTML.split('walking-suggestion')[0].includes("18:15:00発"));
 });
 
 test("乗り逃し: 次の列車と後発の最早到着・重複なし・歩行再加算なし", async () => {
@@ -177,14 +181,14 @@ test("毎秒のカウントダウンは差分更新、カードを再生成し�
   const comparison = a.elements.get("comparison");
   const before = [details.writes, comparison.writes];
   const counts = a.document.querySelectorAll("[data-countdown]");
-  assert.equal(counts[0].textContent, "あと2分0秒");
-  assert.equal(counts[1].textContent, "あと10分0秒");
+  assert.equal(counts[1].textContent, "あと2分0秒");
+  assert.equal(counts[0].textContent, "あと10分0秒");
   const focus = a.elements.get("walk-sakurajosui");
   a.document.activeElement = focus;
   a.setNow("18:03:01");
   await a.tick();
-  assert.equal(counts[0].textContent, "あと1分59秒");
-  assert.equal(counts[1].textContent, "あと9分59秒");
+  assert.equal(counts[1].textContent, "あと1分59秒");
+  assert.equal(counts[0].textContent, "あと9分59秒");
   assert.deepEqual([details.writes, comparison.writes], before);
   assert.equal(a.document.activeElement, focus);
 });
@@ -194,11 +198,11 @@ test("現在モードとテストモード、入力保護と現在時刻に戻�
   await a.manual("18:03:30");
   assert.equal(a.run("state.mode"), "test");
   assert.match(a.elements.get("recommendation-details").innerHTML, /指定時刻からの残り時間/);
-  assert.equal(a.document.querySelectorAll("[data-countdown]")[0].textContent, "あと1分30秒");
+  assert.equal(a.document.querySelectorAll("[data-countdown]")[1].textContent, "あと1分30秒");
   a.setNow("19:00:00");
   await a.tick();
   assert.equal(a.elements.get("departure").value, "2026-10-05T18:03:30");
-  assert.equal(a.document.querySelectorAll("[data-countdown]")[0].textContent, "あと1分30秒");
+  assert.equal(a.document.querySelectorAll("[data-countdown]")[1].textContent, "あと1分30秒");
   a.elements.get("now").dispatch("click");
   await flush();
   assert.equal(a.run("state.mode"), "live");
@@ -215,13 +219,13 @@ test("タブ復帰は実時刻との差で再計算し、期限切れ列車を�
   a.setNow("18:05:30"); // タイマーが一度も呼ばれなかったと仮定。
   await a.resume();
   assert.equal(a.elements.get("recommendation-title").textContent, "今は桜上水駅へ向かう");
-  assert.equal(a.document.querySelectorAll("[data-countdown]")[0].textContent, "あと0分30秒");
-  assert.equal(a.document.querySelectorAll("[data-countdown]")[1].textContent, "あと9分30秒");
+  assert.equal(a.document.querySelectorAll("[data-countdown]")[1].textContent, "あと0分30秒");
+  assert.equal(a.document.querySelectorAll("[data-countdown]")[0].textContent, "あと9分30秒");
   await a.manual("18:03:30");
   a.setNow("20:00:00");
   await a.resume();
   assert.equal(a.elements.get("departure").value, "2026-10-05T18:03:30");
-  assert.equal(a.document.querySelectorAll("[data-countdown]")[0].textContent, "あと1分30秒");
+  assert.equal(a.document.querySelectorAll("[data-countdown]")[1].textContent, "あと1分30秒");
 });
 
 test("不正入力は古い結果を消去し、有効な入力で復帰", async () => {
@@ -237,4 +241,36 @@ test("不正入力は古い結果を消去し、有効な入力で復帰", async
   await a.run("updateResults()");
   assert.equal(a.elements.get("error").hidden, true);
   assert.match(a.elements.get("comparison").innerHTML, /桜上水駅/);
+});
+
+test('下りは桜上水、上りの各停同士は下高井戸、それ以外は最早到着・同着',async()=>{
+  const a=await app();
+  const result=a.run(`(()=>{
+    const rows=[{station:stations[0],train:{arrival:20,type:'各駅停車'},unknownTrains:[]},{station:stations[1],train:{arrival:10,type:'各駅停車'},unknownTrains:[]}];
+    const down=compareRoutes(rows,'outbound');
+    rows[0].train.arrival=5;const local=compareRoutes(rows,'inbound');
+    rows[0].train.type='急行';const faster=compareRoutes(rows,'inbound');
+    rows[0].train.arrival=10;const tie=compareRoutes(rows,'inbound');
+    return [down.winners[0].station.id,down.difference,local.winners[0].station.id,local.difference,faster.winners[0].station.id,tie.winners.length];
+  })()`);
+  assert.deepEqual(Array.from(result),['sakurajosui',-10,'shimotakaido',-5,'sakurajosui',2]);
+  const missing=a.run("compareRoutes([{station:stations[0],train:null,unknownTrains:[]},{station:stations[1],train:{arrival:5,type:'急行'},unknownTrains:[]}],'outbound')");
+  assert.equal(missing.recommendedStation,'sakurajosui');assert.equal(missing.winners.length,0);
+});
+
+test('徒歩短縮は必要量・到着改善を計算し、政策ルール・5分上限・発車済みを考慮',async()=>{
+  const a=await app();
+  const result=a.run(`(()=>{
+    const ref=Date.parse('2026-10-05T18:00:00+09:00');
+    const all=[{id:'early',stationId:'sakurajosui',departure:ref+6*MINUTE,arrival:ref+12*MINUTE,type:'急行'},
+      {id:'normal',stationId:'sakurajosui',departure:ref+10*MINUTE,arrival:ref+20*MINUTE,type:'急行'},
+      {id:'other',stationId:'shimotakaido',departure:ref+10*MINUTE,arrival:ref+22*MINUTE,type:'各駅停車'}];
+    const plan=compareRoutes(stations.map((station,i)=>calculateRoute(station,[9,8][i],ref,all)),'inbound');
+    const yes=walkingSuggestions(plan,all,ref,'inbound');
+    const tooEarly=[{...all[0],departure:ref+MINUTE},...all.slice(1)];
+    const lateArrival=[{...all[0],arrival:ref+21*MINUTE},...all.slice(1)];
+    return {yes:yes.map(item=>[item.reduction,item.gain]),far:walkingSuggestions(plan,tooEarly,ref,'inbound').length,
+      noGain:walkingSuggestions(plan,lateArrival,ref,'inbound').length,departed:walkingSuggestions(plan,all,ref+7*MINUTE,'inbound').length};
+  })()`);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)),{yes:[[180000,480000]],far:0,noGain:0,departed:0});
 });

@@ -1,21 +1,27 @@
 {
-  "version": 1,
+  "version": 2,
   "files": [
     {
-      "name": "all_six_timetables.json",
-      "sha256": "9dc7e4c70ba2e0101958cd77be1463aa8069a2868f4f9af497b6039903f5071a"
+      "name": "keio_12_timetables.json",
+      "sha256": "6344938f7f7c95426565b55d56e3cebe40c8a61ddd92db174142aa8a66b1428a"
     },
     {
       "name": "keio_all_data.json",
-      "sha256": "bd19e179fbc5d6a8202c5f4fc665c6fdac9c4a3031f8652e707674e5ef9bffa9"
+      "sha256": "527eff3fbc5a69967f17430706beed65dcb215903b56d302eb2c6b92a6a9521e"
     }
   ],
   "counts": {
-    "sakurajosui_saturday_inbound": 226,
     "sakurajosui_weekday_inbound": 251,
-    "sasazuka_saturday_inbound": 263,
-    "sasazuka_weekday_inbound": 277,
+    "sakurajosui_weekday_outbound": 240,
+    "sakurajosui_saturday_inbound": 226,
+    "sakurajosui_saturday_outbound": 223,
+    "sakurajosui_sunday_inbound": 226,
+    "sakurajosui_sunday_outbound": 223,
+    "shimotakaido_weekday_inbound": 156,
+    "shimotakaido_weekday_outbound": 161,
     "shimotakaido_saturday_inbound": 155,
-    "shimotakaido_weekday_inbound": 156
+    "shimotakaido_saturday_outbound": 157,
+    "shimotakaido_sunday_inbound": 155,
+    "shimotakaido_sunday_outbound": 157
   }
 }

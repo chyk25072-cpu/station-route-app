@@ -1,133 +1,74 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const path=require('node:path');
-const crypto=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const C=require('../railway-core.js');
 process.env.TZ='Asia/Tokyo';
 const read=name=>JSON.parse(fs.readFileSync(path.join(__dirname,'../data',name),'utf8'));
-const seed={timetables:read('all_six_timetables.json'),network:read('keio_all_data.json')};
-const ingested=C.ingest(seed), base=ingested.trains;
-const at=time=>new Date(`2026-10-19T${time}+09:00`).getTime();
-const memory=()=>{const data=new Map();return{getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};};
-const settings=overrides=>({...C.blankStore().settings,...overrides});
-function query(trains,options={}){return C.query(trains,seed,{start:at('18:00:00'),end:at('20:00:00'),fromIds:['sakurajosui','shimotakaido'],destinationId:'sasazuka',settings:settings({}),...options});}
-function user(departure=1090,arrival=1100,extra={}){return C.makeUserTrain({stationId:'sakurajosui',line:'keio',direction:'inbound',serviceDay:'weekday',type:'各駅停車',destination:'新宿',confirmed:true,checkedAt:'2026-10-18',stops:[
-  {stationId:'sakurajosui',arrival:null,departure,stop:true,arrivalSource:null,departureSource:'user_entered'},
-  {stationId:'sasazuka',arrival,departure:null,stop:true,arrivalSource:'user_entered',departureSource:null}
-],...extra});}
+const seed={timetables:read('keio_12_timetables.json'),network:read('keio_all_data.json')};
+const base=C.ingest(seed).trains,start=new Date('2026-10-23T18:00:00+09:00').getTime();
+require('../api-config.js');const aliases=globalThis.EkispertConfig.destinationAliases;
+function user(departure=1090,arrival=1100,extra={}){return C.makeUserTrain({stationId:'sakurajosui',line:'keio',direction:'inbound',serviceDay:'weekday',type:'各駅停車',destination:'新宿',stops:C.parseStopLines(`桜上水,,${C.serviceTime(departure)},停車\n笹塚,${C.serviceTime(arrival)},,停車`),...extra});}
+const query=(trains,settings={},destinationId='sasazuka')=>C.query(trains,seed,{start,end:start+7200000,fromIds:C.FOCUS_STATIONS,destinationId,settings}).trains;
 
-test('6種類・1328件を省略せず変換し、元の全フィールドを保持',()=>{
-  assert.deepEqual(ingested.counts,{sakurajosui_saturday_inbound:226,sakurajosui_weekday_inbound:251,sasazuka_saturday_inbound:263,sasazuka_weekday_inbound:277,shimotakaido_saturday_inbound:155,shimotakaido_weekday_inbound:156});
-  assert.equal(base.length,1328);assert.equal(new Set(base.map(train=>train.id)).size,1328);
-  for(const train of base){const table=seed.timetables.timetables[train.tableId], row=table.trains[train.raw.index];
-    assert.deepEqual(train.raw.train,row);assert.deepEqual(train.raw.normalized,table.normalized_trains[train.raw.index]);
-    assert.equal(train.type,row.type);assert.equal(train.direction,'inbound');
-    assert.equal(train.stops[0].departure,C.parseServiceTime(row.departure,row.nextDay??row.next_day));
-    assert.equal(train.serviceDay,table.dayType==='weekday'?'weekday':'holiday');assert.equal(train.verification.status,'unconfirmed');
-  }
-  assert.deepEqual(seed.timetables.timetables,seed.network.timetables);
-});
-test('元JSONとバンドルの完全性・各ファイルのSHA256',()=>{
+test('元JSON・静的バンドル・SHA256と2駅限定の完全性',()=>{
   for(const item of read('manifest.json').files)assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(__dirname,'../data',item.name))).digest('hex'),item.sha256);
   const context=require('node:vm').createContext({});require('node:vm').runInContext(fs.readFileSync(path.join(__dirname,'../data/seed.js'),'utf8'),context);
   assert.equal(JSON.stringify(context.RailwaySeed.timetables),JSON.stringify(seed.timetables));
+  assert.equal(seed.network.timetables,undefined);assert.ok(base.every(t=>C.isFocusStation(t.anchorStationId)));
+  assert.equal(C.generateSimulation,undefined);
 });
-test('走行時間31区間・方向差・未対応種別を区別',()=>{
+test('駅間平均31区間を保持し、根拠のない種別・区間を補わない',()=>{
   assert.equal(seed.network.travelTimeProfiles['各駅停車'].segments.length,31);
-  assert.equal(C.runningTime(seed.network,'shimotakaido','sakurajosui','各駅停車').minutes,1);
-  assert.equal(C.runningTime(seed.network,'sakurajosui','shimotakaido','各駅停車').minutes,1);
-  assert.equal(C.runningTime(seed.network,'sakurajosui','shimotakaido','各駅停車',{allowReverse:true}).minutes,1);
-  for(const type of ['快速','特急','区間急行','急行'])assert.equal(C.runningTime(seed.network,'sakurajosui','sasazuka',type),null);
+  for(const [a,b]of [['sakurajosui','shimotakaido'],['shimotakaido','sakurajosui']])assert.equal(C.runningTime(seed.network,a,b,'各駅停車').minutes,1);
+  assert.equal(C.runningTime(seed.network,'sakurajosui','sasazuka','急行'),null);
+  assert.equal(C.runningTime(seed.network,'北野','高尾山口','各駅停車'),null);
 });
-test('重点3駅の上りは走行時間を参照せず、元の発車と到着未登録を保持',()=>{
-  const noRuntime={...seed,get network(){throw Error('走行時間が混入しました');}};
-  const result=C.query(base,noRuntime,{start:at('18:00:00'),end:at('20:00:00'),fromIds:['sakurajosui','shimotakaido','sasazuka'],destinationId:'新宿'});
-  assert.ok(result.trains.length>0);assert.ok(result.trains.every(train=>train.source==='developer_provided'&&train.arrival===null&&train.legs.length===0));
-  const train=base.find(train=>train.type==='各駅停車');const expanded=C.expandTrain(train,noRuntime.networkSafe,{mode:'simulation',allowReverse:true});
-  assert.deepEqual(expanded.stops,train.stops);
+test('API平均時間を発車に加算し、登録済み到着時刻を優先する',()=>{
+  const initial=query(base),predictions={};
+  for(const row of initial)predictions[C.predictionKey(row.stationId,'sasazuka',row.type,row.direction,row.operatingDate,row.predictionSegments)]={minutes:5,source:'ekispert'};
+  const rows=query(base,{predictions});assert.ok(rows.length);
+  assert.ok(rows.every(row=>row.arrival-row.departure===300000&&row.arrivalSource==='estimated'));
+  const registered=user(1090,1100);assert.equal(query([registered],{predictions})[0].arrival-start,20*60000);
+  const blocked=Object.fromEntries(Object.keys(predictions).map(key=>[key,{notServed:true}]));assert.equal(query(base,{predictions:blocked}).length,0);
 });
-test('確認操作なしで提供発車を使用し、旧モード設定は検索を制限しない',()=>{
-  const initial=query(base);assert.ok(initial.trains.length>0);assert.ok(initial.trains.every(train=>train.arrivalMissing));
-  const old=query(base,{settings:settings({mode:'practical',allowEstimated:false,allowReverse:false})});
-  assert.deepEqual(old.trains.map(train=>train.id),initial.trains.map(train=>train.id));
-  const row=user(1090,1100,{confirmed:false});assert.ok(query([row]).trains.some(train=>Number.isFinite(train.arrival)));
+test('行先・経由路線・種別変更を使い、終点越えや通過駅を除外',()=>{
+  const high=C.clone(base.find(t=>t.destination==='高八'));assert.ok(high);
+  assert.equal(C.terminalStation(high,aliases),'京王八王子');
+  assert.deepEqual(C.predictionSegments(high,'sakurajosui','京王八王子',aliases),[{from:'sakurajosui',to:'高幡不動',type:high.type},{from:'高幡不動',to:'京王八王子',type:'各駅停車'}]);
+  const bridge=base.find(t=>t.destination==='セ橋');
+  assert.deepEqual(C.predictionSegments(bridge,'sakurajosui','橋本',aliases),[{from:'sakurajosui',to:'調布',type:bridge.type},{from:'調布',to:'京王多摩センター',type:bridge.type},{from:'京王多摩センター',to:'橋本',type:'各駅停車'}]);
+  const short=C.clone(high);short.destination='高';short.raw.train.destination_raw='高';short.stops[0].departure=1090;
+  assert.equal(query([short],{destinationAliases:aliases},'京王八王子').length,0);
+  const wrongBranch=C.clone(high);wrongBranch.stops[0].departure=1090;
+  assert.equal(query([wrongBranch],{destinationAliases:aliases},'橋本').length,0);
+  const pass=user();pass.stops[1].stop=false;assert.equal(query([pass]).length,0);
 });
-test('曜日混在なし・下りへ上りの提供時刻を転用しない・笹塚からも検索',()=>{
-  const monday=query(base);assert.ok(monday.trains.every(train=>train.serviceDay==='weekday'));
-  const sunday=new Date('2026-10-18T18:00:00+09:00').getTime();
-  assert.ok(query(base,{start:sunday,end:sunday+7200000}).trains.every(train=>train.serviceDay==='holiday'));
-  assert.equal(query(base,{destinationId:'京王八王子'}).trains.length,0);
-  assert.ok(query(base,{fromIds:['sasazuka'],destinationId:'新宿'}).trains.length>0);
-});
-test('同一列車の根拠がないデータを自動統合しない・通過駅で乗降しない',()=>{
-  assert.equal(base.filter(train=>train.stops.length!==1).length,0);
-  const train=user();train.stops.splice(1,0,{stationId:'shimotakaido',arrival:1091,departure:1091,stop:false,arrivalSource:'user_entered',departureSource:'user_entered'});
-  assert.equal(query([train],{fromIds:['shimotakaido']}).trains.length,0);
-  assert.equal(query([train],{destinationId:'shimotakaido'}).trains.length,0);
-});
-test('追加・編集・削除・再読み込み・優先順位・リセット',()=>{
-  const storage=memory(),store=C.blankStore(),train=user();C.upsert(store,train,base);
-  assert.ok(C.effectiveTrains(base,store).some(row=>row.id===train.id));
-  const original=base[0],edit={...C.clone(original),source:'user_entered',updatedAt:'2026-10-18',verification:{status:'confirmed',checkedAt:'2026-10-18'}};edit.stops[0].departure+=1;edit.stops[0].departureSource='user_entered';
-  C.upsert(store,edit,base);assert.equal(C.effectiveTrains(base,store).find(row=>row.id===original.id).stops[0].departure,original.stops[0].departure+1);
+test('追加・編集・削除・再読み込み・リセットを維持',()=>{
+  const store=C.blankStore(),train=user();C.upsert(store,train,base);
+  assert.ok(query(C.effectiveTrains(base,store)).some(t=>t.trainId===train.id));
+  const original=base[0],edit={...C.clone(original),source:'user_entered'};edit.stops[0].departure+=1;C.upsert(store,edit,base);
+  const data=new Map(),storage={getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v)};
   C.remove(store,original.id);C.saveStore(storage,store);
-  assert.ok(!C.effectiveTrains(base,C.loadStore(storage)).some(row=>row.id===original.id));
-  assert.equal(C.effectiveTrains(base,C.blankStore()).length,1328);
-  assert.equal(original.stops[0].departure,C.parseServiceTime(original.raw.train.departure,original.raw.train.next_day));
+  assert.ok(!C.effectiveTrains(base,C.loadStore(storage,seed)).some(t=>t.id===original.id));
+  assert.equal(C.effectiveTrains(base,C.blankStore()).length,2330);
 });
-test('一括登録は重複・不正値・矛盾を拒否し全件ロールバック',()=>{
+test('一括登録・重複・不正時刻・逆転・登録駅の制限',()=>{
   const store=C.blankStore(),defaults={stationId:'sakurajosui',line:'keio',direction:'inbound',serviceDay:'weekday',type:'各駅停車',destination:'新宿'};
-  const result=C.bulkAdd(store,'18:03\n18:12,急行,新宿',defaults,base);assert.equal(result.added.length,2);assert.equal(result.added[0].stops.length,1);assert.equal(result.added[0].verification.status,'unconfirmed');
-  assert.throws(()=>C.bulkAdd(store,'18:03\n18:03',defaults,base),/既にあります/);assert.equal(store.additions.length,0);
-  assert.throws(()=>C.bulkAdd(store,'18:03\n25:99',defaults,base));
-  const invalid=user(1100,1090);assert.ok(C.validateTrain(invalid).some(message=>message.includes('逆転')));
-  const wrongDirection=user();wrongDirection.direction='outbound';assert.ok(C.validateTrain(wrongDirection).some(message=>message.includes('方向')));
-  const wrongDestination=user();wrongDestination.destination='京王八王子';assert.ok(C.validateTrain(wrongDestination).some(message=>message.includes('行先')));
+  assert.equal(C.bulkAdd(store,'26:01\n26:02,急行,新宿',defaults,base).added.length,2);
+  assert.throws(()=>C.bulkAdd(store,'26:01\n26:01',defaults,base),/既に/);
+  assert.throws(()=>C.bulkAdd(store,'26:03\n18:99',defaults,base));assert.equal(store.additions.length,0);
+  assert.ok(C.validateTrain(user(1100,1090)).some(t=>t.includes('逆転')));
+  assert.ok(C.validateTrain(user(1090,1100,{stationId:'明大前'})).length);
 });
-test('保存形式の版・エクスポート再取込・既存キー保全・徒歩記録',()=>{
-  const storage=memory();storage.setItem('other-existing-key','keep');
-  const store=C.blankStore();store.walking.history=[{stationId:'sakurajosui',seconds:540,date:'2026-10-18T00:00:00Z'}];store.walking.values.sakurajosui=9;
-  C.saveStore(storage,store);const exported=JSON.stringify(C.loadStore(storage));const imported=JSON.parse(exported);assert.deepEqual(C.validateStore(imported),[]);
-  assert.equal(storage.getItem('other-existing-key'),'keep');assert.equal(imported.walking.history[0].seconds,540);
-  assert.ok(C.validateStore({...imported,version:999}).length);
-  assert.ok(C.validateStore({...imported,additions:[{...user(),verification:{status:'confirmed',checkedAt:null}}]}).length);
-});
-test('サービス日24時以降・翌日平日へ誤分類しない',()=>{
-  assert.equal(C.parseServiceTime('00:16',true),1456);assert.ok(C.parseServiceTime('24:05')>C.parseServiceTime('23:58'));
-  const train=user(1450,1460,{serviceDay:'holiday'});const midnight=new Date('2026-10-19T00:00:00+09:00').getTime();
-  const result=query([train],{start:midnight,end:midnight+7200000});assert.equal(result.trains.length,1);assert.equal(result.trains[0].serviceDay,'holiday');
-  assert.equal(result.trains[0].departure,new Date('2026-10-19T00:10:00+09:00').getTime());
-});
-test('本線・支線生成800本の連続時刻・曜日・方向・単一モードでの利用',()=>{
-  const all=['weekday','holiday'].flatMap(day=>C.generateSimulation(seed,day));assert.equal(all.length,800);
-  for(const train of all){assert.equal(train.source,'simulated');assert.deepEqual(C.validateTrain(train),[]);assert.ok(train.stops.every(stop=>stop.stop));}
-  const result=query(all,{fromIds:['明大前']});assert.ok(result.trains.length>0);assert.ok(result.trains.every(train=>train.simulation));
-  assert.ok(query(all,{fromIds:['明大前'],settings:settings({mode:'practical'})}).trains.length>0);
-  const store=C.blankStore();C.remove(store,all[0].id);const storage=memory();C.saveStore(storage,store);assert.equal(C.effectiveTrains(all,C.loadStore(storage)).length,799);
-});
-test('全路線の各駅から隣駅へ上下両方向で検索できる',()=>{
-  const all=[...base,...['weekday','holiday'].flatMap(day=>C.generateSimulation(seed,day))];
-  for(const names of Object.values(C.LINES))for(let i=0;i<names.length;i++)for(const delta of [-1,1]){
-    if(!names[i+delta])continue;
-    const from=C.stationId(names[i]),to=C.stationId(names[i+delta]);
-    const result=query(all,{fromIds:[from],destinationId:to});
-    assert.ok(result.trains.length,`${names[i]}→${names[i+delta]}`);
-    if(!['sakurajosui','shimotakaido','sasazuka'].includes(from)||delta===1)assert.ok(result.trains.some(train=>Number.isFinite(train.arrival)),`${names[i]}→${names[i+delta]}の到着`);
-  }
-});
-test('支線から新宿・支線相互・新線も乗換で接続し時刻が整合する',()=>{
-  const all=[...base,...['weekday','holiday'].flatMap(day=>C.generateSimulation(seed,day))];
-  for(const [from,to]of [['高尾山口','新宿'],['橋本','高尾山口'],['新線新宿','橋本'],['初台','新宿'],['新宿','高尾山口']]){
-    const result=query(all,{fromIds:[from],destinationId:to});assert.ok(result.trains.length,from+'→'+to);
-    const train=result.trains[0];assert.equal(train.legs[0].fromStationId,from);assert.equal(train.legs.at(-1).toStationId,to);assert.equal(train.arrival,train.legs.at(-1).arrival);
-    for(let i=1;i<train.legs.length;i++){assert.equal(train.legs[i-1].toStationId,train.legs[i].fromStationId);assert.ok(train.legs[i].departure-train.legs[i-1].arrival>=60000);}
-    assert.ok(train.simulation);
-  }
-});
-test('他駅の深夜・土休日検索も日付と方向が整合する',()=>{
-  const all=[...base,...['weekday','holiday'].flatMap(day=>C.generateSimulation(seed,day))];
-  const start=new Date('2026-10-18T23:58:00+09:00').getTime();
-  const result=query(all,{start,end:start+7200000,fromIds:['明大前'],destinationId:'sasazuka'});
-  assert.ok(result.trains.length);assert.ok(result.trains.some(train=>new Date(train.arrival).getDate()===19));assert.ok(result.trains.every(train=>train.serviceDay==='holiday'));
+test('他駅の時刻表・旧設定を読み込み時に整理し、徒歩記録・両駅編集を保持',()=>{
+  const store=C.blankStore();store.settings.mode='simulation';store.settings.search={origin:'自宅',candidates:['明大前','代田橋'],destination:'新宿'};
+  store.additions=[user(),{...user(),id:'user:other',anchorStationId:'明大前'}];
+  store.updates['sim:old']={...user(),id:'sim:old'};
+  store.deleted=['provided:sasazuka_weekday_inbound:0','provided:sakurajosui_weekday_inbound:0'];
+  store.walking.history=[{stationId:'sakurajosui',seconds:540,date:'2026-10-18'}];
+  const storage={getItem:()=>JSON.stringify(store)},loaded=C.loadStore(storage,seed);
+  assert.equal(loaded.additions.length,1);assert.deepEqual(loaded.updates,{});assert.equal(loaded.deleted.length,1);
+  assert.equal(loaded.settings.mode,undefined);assert.deepEqual(loaded.settings.search,{destination:'新宿'});
+  assert.equal(loaded.walking.history[0].seconds,540);assert.ok(loaded.walking.history[0].id);
+  assert.equal(C.walkingAverage(loaded,'sakurajosui'),540);assert.deepEqual(C.validateStore(loaded),[]);
 });

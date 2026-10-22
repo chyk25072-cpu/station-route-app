@@ -105,6 +105,15 @@ summary { cursor: pointer; font-weight: 700; font-size: 15px; padding: 6px 0; }
 .station-choices legend { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
 .station-choice { display: grid; grid-template-columns: minmax(0, 1fr) 100px; gap: 14px; }
 .station-choice select { margin-bottom: 8px; }
+.station-choice > strong { align-self: center; font-size: 16px; }
+.fixed-origin { font-size: 12px; font-weight: 600; }
+.fixed-origin strong { display: block; margin-top: 12px; font-size: 16px; }
+.walking-history { margin-top: 28px; }
+.walking-history ul { list-style: none; padding: 0; }
+.walking-history li { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e0e7e2; padding: 12px 0; font-size: 13px; }
+.walking-history time { display: block; font-size: 12px; margin-top: 6px; color: #61776a; }
+.walking-suggestion { background: #edf4e9; color: #244d3e; border-radius: 10px; padding: 14px; margin-top: 16px; font-size: 13px; line-height: 1.8; }
+.walking-suggestion p { margin: 4px 0; }
 .time-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
 .search-panel .hint { margin: 0; }
 .primary { background: #174e41; color: white; font-size: 16px; font-weight: 700; min-height: 50px; }
